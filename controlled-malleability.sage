@@ -14,16 +14,6 @@ from itertools import chain
 import random
 
 
-# Check current ECL configuration
-maxima.eval(":lisp (si:gc-stats)")
-
-# Or check environment variables
-import os
-print("ECL_HEAP_SIZE:", os.environ.get('ECL_HEAP_SIZE', 'Not set (using default)'))
-print("ECL_STACK_SIZE:", os.environ.get('ECL_STACK_SIZE', 'Not set (using default)'))
-
-exit(1)
-
 def defvars(label, n):
     return list(var(label + '_%d' % i) for i in range(n))
 
