@@ -1,13 +1,4 @@
 #!/usr/bin/env python
-# coding: utf-8
-
-# In[1]:
-
-
-#from IPython.display import display, HTML
-#display(HTML("<style>div.output_scroll { height: 100em; }</style>"))
-#from IPython.display import display, HTML
-#display(HTML("<style>.container { width:100% !important; }</style>"))
 
 import itertools
 from itertools import chain
@@ -55,7 +46,8 @@ def stack(vec1,vec2):
     return vector(list(vec1) + list(vec2))
 
 
-# In[3]:
+
+
 
 
 def print_coeff(eq,mon):
@@ -67,7 +59,6 @@ def print_coeff(eq,mon):
     print("--------------------------")
 
 
-# In[4]:
 
 
 nx = 6            # number of instance elements
@@ -481,6 +472,7 @@ def Mtheta(inst):
     mat[10][14] = -hs[0]
     vec[4] = 0
 
+    # THIS ONE MUST BE DISABLED
     #mat[11][3] = inst[0]
     #mat[11][15] = -1
     #mat[11][13] = -hs[0]
@@ -712,7 +704,6 @@ m_tens_const = [[find_constant_coeff(M(xs)[i][j]) for j in range(m)] for i in ra
 #print(Matrix(m_tens_const))
 
 
-# In[5]:
 
 
 Txs = [[var('Tx_%d_%d' % (i, j)) for j in range(nx + nh + 1)] for i in range(nx)]
@@ -1218,7 +1209,6 @@ Tw_orig = Tw
 ts_map = {}
 
 
-# In[6]:
 
 
 # Optional: perform a substitution mapping for instance/witness variables
@@ -1260,7 +1250,6 @@ for (e,i) in zip(eq_u,range(n)):
     print(" ", i, ": ", e.full_simplify())
 
 
-# In[7]:
 
 
 # Solve for dependencies between witnesses. It seems only reasonable to AGM-like solve over the independent basis
@@ -1348,7 +1337,7 @@ chosen_sol = sols[0]
 #                  }
 #param_values = [ ]
 
-# "w -> alpha w" is forbidden even when w is known
+## "w -> alpha w" is forbidden even when w is known
 #param_solution = { x_0: -(-H0*rr_2 - rr_0),
 #                   x_1: (H0*rr_2 + rr_0 + H1)*rr_1 + H2 * rr_3,
 #                   x_2: H3 * rr_3 + H4 * rr_4,
@@ -1387,7 +1376,7 @@ chosen_sol = sols[0]
 #                  }
 #param_values = [ ]
 
-# WHEN w0 is known: w0 -> w0 + w1
+## WHEN w0 is known: w0 -> w0 + w1
 param_solution = { x_0: rr_0 + H0 * rr_2,
                    x_1: rr_1 + H0 * rr_3,
                    x_2: rr_0 * rr_0 + rr_0 + H2 * rr_0 + H3 * rr_4,
@@ -1427,6 +1416,8 @@ for i in range(n):
 #if any([eq_basic[i].subs(param_solution).full_simplify().subs(rr_0^2 == 1).full_simplify() != 0 for i in range(n)]):
 if any([eq_basic[i].subs(param_solution).full_simplify() != 0 for i in range(n)]):
     raise SystemExit("solution does not work")
+else:
+    print("Yes! Solution works")
 
 
 chosen_sol = param_solution
@@ -1459,7 +1450,6 @@ x_via_eq_basic_params = vector([elem.subs(chosen_sol) for elem in x2])
 print(x_via_eq_basic_params)
 
 
-# In[8]:
 
 
 # Helper functions for solving equations AGM-style
@@ -1503,7 +1493,7 @@ def sym_to_poly(poly):
     return polynomial(poly, ring=R)
 
 
-# In[ ]:
+
 
 
 # AGM-solve for witness/instance transformations (Tx, Tw) but NOT Ta
@@ -1518,6 +1508,8 @@ Tw_vars_flat = [x for sublist in Tws for x in sublist]
 
 print(Tw_vars_flat + Tx_vars_flat)
 
+
+RTxTw = PolynomialRing(SR, concat([Tx_vars_flat, Tw_vars_flat]))
 
 # Transform equation to symbolic form
 #eq_u_updated = [sym_to_poly(eq.subs(basic_sol)) for eq in eq_u]
@@ -1595,9 +1587,99 @@ print("Does the static TxTw substitution satisfy equations?")
 print(all([e == 0 for e in subs_vec(coeff_eqs,TxTw_solutions_subs)]))
 print("")
 
+
+simplified_coeff_eqs = [eq.simplify_full() for eq in coeff_eqs]
+#for i in range(0,len(coeff_eqs)):
+#    print(" ", i, ": ", coeff_eqs[i], "    vs    ", simplified_coeff_eqs[i])
+
+simplified_coeff_eqs = list(set(simplified_coeff_eqs))
+print("Simplified coeff eqs, from N to M: ", len(coeff_eqs), len(simplified_coeff_eqs))
+coeff_eqs = simplified_coeff_eqs
+
+
+def identify_zero_vars(equations, variables):
+
+    remaining_eqs = equations[:]
+    substitutions = {}
+
+    while True:
+        found_substitution = False
+
+        for eq in remaining_eqs[:]:  # Copy list to modify during iteration
+            eq_vars = list(eq.variables())
+
+            from sage.symbolic.expression_conversions import polynomial
+            eq_poly = polynomial(eq, ring=RTxTw)
+
+            # Case 1: equation is just "var" or "-var" or "c*var"
+            if len(eq_vars) == 1 and eq_poly.total_degree() == 1:
+                var = eq_vars[0]
+                if var in variables:
+                    substitutions[var] = 0
+                    remaining_eqs.remove(eq)
+                    found_substitution = True
+                    print(f"Set {var} = 0")
+
+            # Case 2: equation is "0" (remove it)
+            elif eq == 0:
+                remaining_eqs.remove(eq)
+                found_substitution = True
+
+        # Apply all substitutions to remaining equations
+        if substitutions:
+            remaining_eqs = [eq.subs(substitutions) for eq in remaining_eqs]
+            remaining_eqs = [eq for eq in remaining_eqs if eq != 0]  # Remove zeros
+
+        if not found_substitution:
+            break
+
+    remaining_vars = [v for v in variables if v not in substitutions]
+
+    print(f"Reduced from {len(equations)} to {len(remaining_eqs)} equations")
+    print(f"Reduced from {len(variables)} to {len(remaining_vars)} variables")
+    print(f"Set {len(substitutions)} variables to zero")
+
+    return remaining_eqs, remaining_vars, substitutions
+
+# Use it
+simplified_eqs, remaining_vars, zero_vars = identify_zero_vars(
+    coeff_eqs, Tw_vars_flat + Tx_vars_flat
+)
+
+print("simplified eqs:", len(simplified_eqs), simplified_eqs)
+print("remaining_vars:", remaining_vars)
+print("zero_vars:", zero_vars)
+
+coeff_eqs = simplified_eqs
+sol_vars = remaining_vars
+
+print("Remaining equations:")
+for (e,i) in zip(coeff_eqs,range(0,len(coeff_eqs))):
+    print(" ", i, ": ", e)
+
+sols = [{v: 0 for v in zero_vars}]
+
+print_solutions(sols)
+
+# Here I still solve coef_eqs that are symbolic.
+
 print("...Solving the system of equations (takes time)...")
-sols = solve(coeff_eqs, Tw_vars_flat + Tx_vars_flat, solution_dict=True, algorithm='maxima')
-#sols = solve(coeff_eqs, Tw_vars_flat + Tx_vars_flat, solution_dict=True, algorithm='sympy')
+#sols = solve(coeff_eqs, Tw_vars_flat + Tx_vars_flat, solution_dict=True, algorithm='maxima')
+#sols = solve(coeff_eqs, Tw_vars_flat + Tx_vars_flat, solution_dict=True, algorithm='maxima',
+#             multiplicities=False,       # Don't compute multiplicities
+#             to_poly_solve='force',      # Force polynomial solving
+#             domain=F           # Or 'real' if you want real solutions only
+#             )
+sols = solve(coeff_eqs, sol_vars, solution_dict=True, algorithm='sympy')
+
+#from sympy import solve as sympy_solve
+#from sympy import symbols
+#sols = sympy_solve(coeff_eqs, sol_vars,
+#                   dict=True,           # Return as dictionary
+#                   set=True,            # Find all solutions in solution set
+#                   particular=False,    # Don't just find particular solutions
+#                   minimal=False,       # Don't minimize the solution set
+#                   warn=True)           # Show warnings about missed solutions
 #sols = solve(coeff_eqs, Tw_vars_flat + Tx_vars_flat, solution_dict=True, algorithm='fricas')
 #sols = iterative_solve(coeff_eqs, Tw_vars_flat + Tx_vars_flat)
 
