@@ -62,10 +62,10 @@ def print_coeff(eq,mon):
 
 
 nx = 6            # number of instance elements
-ntheta = 5        # number of theta elems
+ntheta = 6        # number of theta elems
 n = nx + ntheta   # number of equations
-m = 15             # number of witness elements
-nh = 6            # number of random bases
+m = 16             # number of witness elements
+nh = 7            # number of random bases
 
 hs = [var('H%d' % i) for i in range(nh)]
 rr_vars = [var('rr_%d' % i) for i in range(m)]
@@ -386,10 +386,10 @@ def Mtheta(inst):
 
     # x0 = G^w0 H0^w2
     # x1 = G^w1 H0^w3
-    # x2 = x0^{w0} H0^{-w7} H2^w0 H3^w4     = G^{w0^2 + w0}   H2^w0  H3^w4
-    # x3 = G^{2*w11 + w1} H2^w1 H3^w5       = G^{2*w1w0 + w1} H2^w1  H3^w5
-    # x4 = G^{w9} H3^w6                     = G^{w1^2}               H3^w6
-    # x5 = G^{w9} H4^w1                     = G^{w1^2}               H4^w1
+    # x2 = H1^{w15 + w0} H2^w0 H3^w4         = H1^{w0^2 + w0}   H2^w0  H3^w4
+    # x3 = H1^{2*w11 + w1} H2^w1 H3^w5       = H1^{2*w1w0 + w1} H2^w1  H3^w5
+    # x4 = H1^{w9} H3^w6                     = H1^{w1^2}               H3^w6
+    # x5 = H4^{w9} H5^w1                    = H4^{w1^2}              H5^w1
 
     # introduce vars: ...
     # 0 = x0^{w2} G^{-w7} H0^{-w8}      => w7 = w0w2   w8 = w2^2
@@ -397,7 +397,8 @@ def Mtheta(inst):
     # 0 = x0^{w1} G^{-w11} H0^{-w12}    => w11 = w0w1  w12 = w2w1
     # 0 = x1^{w2} G^{-w12} H0^{-w13}    => w13 = w2w3
     # 0 = x1^{w3} G^{-w10} H0^{-w14}    => w14 = w3^2
-    # 0 = x0^{w3} G^{-w15} H0^{-w13}    => w15 = w0w3
+    #### 0 = x0^{w3} G^{-w15} H0^{-w13}    => w15 = w0w3
+    # 0 = x0^{w0} G^{-w15} H0^{-w7}     => w15 = w0^2
 
 
     # Updating:
@@ -433,19 +434,19 @@ def Mtheta(inst):
     mat[1][1] = 1
     mat[1][3] = hs[0]
 
-    mat[2][0] = inst[0] + hs[2] + 1
-    mat[2][7] = -hs[0]
+    mat[2][15] = hs[1]
+    mat[2][0] = hs[1] + hs[2]
     mat[2][4] = hs[3]
 
-    mat[3][1] = 1 + hs[2]
-    mat[3][11] = 2
+    mat[3][1] = hs[1] + hs[2]
+    mat[3][11] = 2 * hs[1]
     mat[3][5] = hs[3]
 
-    mat[4][9] = 1
+    mat[4][9] = hs[1]
     mat[4][6] = hs[3]
 
-    mat[5][9] = 1
-    mat[5][1] = hs[4]
+    mat[5][9] = hs[4]
+    mat[5][1] = hs[5]
 
     mat[6][2] = inst[0]
     mat[6][7] = -1
@@ -471,6 +472,11 @@ def Mtheta(inst):
     mat[10][10] = -1
     mat[10][14] = -hs[0]
     vec[4] = 0
+
+    mat[11][0] = inst[0]
+    mat[11][15] = -1
+    mat[11][7] = -hs[0]
+    vec[5] = 0
 
     # THIS ONE MUST BE DISABLED
     #mat[11][3] = inst[0]
@@ -1379,10 +1385,10 @@ chosen_sol = sols[0]
 ## WHEN w0 is known: w0 -> w0 + w1
 param_solution = { x_0: rr_0 + H0 * rr_2,
                    x_1: rr_1 + H0 * rr_3,
-                   x_2: rr_0 * rr_0 + rr_0 + H2 * rr_0 + H3 * rr_4,
-                   x_3: 2 * rr_0 * rr_1 + rr_1 + H2 * rr_1 + H3 * rr_5,
-                   x_4: rr_1 * rr_1 + H3 * rr_6,
-                   x_5: rr_1 * rr_1 + H4 * rr_1,
+                   x_2: H1 * (rr_0 * rr_0 + rr_0) + H2 * rr_0 + H3 * rr_4,
+                   x_3: H1 * (2 * rr_0 * rr_1 + rr_1) + H2 * rr_1 + H3 * rr_5,
+                   x_4: H1 * (rr_1 * rr_1) + H3 * rr_6,
+                   x_5: H4 * (rr_1 * rr_1) + H5 * rr_1,
                    w_0: rr_0,
                    w_1: rr_1,
                    w_2: rr_2,
@@ -1398,6 +1404,7 @@ param_solution = { x_0: rr_0 + H0 * rr_2,
                    w_12: rr_2 * rr_1,
                    w_13: rr_2 * rr_3,
                    w_14: rr_3 * rr_3,
+                   w_15: rr_0 * rr_0,
                    #w_15: rr_0 * rr_3,
                   }
 param_values = [ ]
@@ -1472,13 +1479,13 @@ def reassign_vars(R,varlists):
     return (to_sym_map,ret)
 
 # Ringvars are the "Trapdoors" over which we want to extract AGM sub-equations
-#ringvars = [hs, xs, ws, zs, eq_basic_params]
-ringvars = [hs, xs, ws, zs, [e for e in eq_basic_params if e != rr_vars[0]]]
+ringvars = [hs, eq_basic_params]
+#ringvars = [hs, xs, ws, zs, [e for e in eq_basic_params if e != rr_vars[0]]]
 #ringvars = [[h for h in hs if h != hs[1]], xs, ws, zs, eq_basic_params]
 print("ringvars: ", ringvars)
 R = PolynomialRing(SR, concat(ringvars))
 #R.inject_variables()
-(to_sym_map,[poly_hs,poly_xs,poly_ws,poly_zs,poly_eq_basic_params]) = reassign_vars(R,ringvars)
+(to_sym_map,[poly_hs,poly_eq_basic_params]) = reassign_vars(R,ringvars)
 
 print(ringvars)
 
@@ -1605,6 +1612,7 @@ def identify_zero_vars(equations, variables):
     while True:
         found_substitution = False
 
+        print("Setting these variables to zero: ")
         for eq in remaining_eqs[:]:  # Copy list to modify during iteration
             eq_vars = list(eq.variables())
 
@@ -1618,13 +1626,14 @@ def identify_zero_vars(equations, variables):
                     substitutions[var] = 0
                     remaining_eqs.remove(eq)
                     found_substitution = True
-                    print(f"Set {var} = 0")
+                    print(f"{var} = 0,", end="", flush=True)
 
             # Case 2: equation is "0" (remove it)
             elif eq == 0:
                 remaining_eqs.remove(eq)
                 found_substitution = True
 
+        print("")
         # Apply all substitutions to remaining equations
         if substitutions:
             remaining_eqs = [eq.subs(substitutions) for eq in remaining_eqs]
@@ -1642,9 +1651,17 @@ def identify_zero_vars(equations, variables):
     return remaining_eqs, remaining_vars, substitutions
 
 # Use it
-simplified_eqs, remaining_vars, zero_vars = identify_zero_vars(
-    coeff_eqs, Tw_vars_flat + Tx_vars_flat
-)
+#simplified_eqs, remaining_vars, zero_vars = identify_zero_vars(
+#    coeff_eqs, Tw_vars_flat + Tx_vars_flat
+#)
+
+simplified_eqs = [-Tw_0_16 - Tw_15_16 + Tx_2_7, -Tw_0_0 - Tw_15_0 + Tx_2_2, -Tw_2_16*Tx_1_1 + Tw_12_1, -Tw_0_0 + Tx_2_2, -Tw_1_16*Tx_0_13 + Tw_11_16, -Tw_2_16*Tx_1_13 + Tw_12_16, -Tw_2_2*Tx_1_1 + Tw_12_12, -Tw_1_16*Tx_1_1 - Tw_1_1*Tx_1_13, -Tw_3_16 + Tx_1_6, -Tw_9_16 + Tx_4_7, -Tw_0_1*Tx_0_1 + Tw_7_10, -Tw_2_16*Tx_1_1 - Tw_2_3*Tx_1_6 + Tw_13_3, -Tw_3_16*Tx_1_1 + Tw_10_1, -2*Tw_11_9 + Tx_3_4, -Tw_2_3*Tx_0_0, -Tw_2_2*Tx_1_13 + Tw_12_2, -Tw_2_16 + Tx_0_6, -Tw_2_16*Tx_0_13 + Tw_7_16, -Tw_0_16 + Tx_0_13, -Tw_2_3*Tx_1_1 + Tw_12_10, -Tw_0_1*Tx_0_0 - Tw_0_0*Tx_0_1 + Tw_15_11, -Tw_1_1 + Tx_1_1, -Tw_3_16*Tx_1_6 + Tw_14_16, -Tw_1_1*Tx_0_6 + Tw_12_1, -Tw_2_2*Tx_0_1 + Tw_7_12, -Tw_1_16*Tx_0_0 + Tw_12_2, -Tw_15_11 + 2*Tx_2_3, -Tw_1_1*Tx_1_1 + Tw_10_10, -Tw_2_2*Tx_0_0 + Tw_7_7, -Tw_1_1*Tx_1_6 + Tw_10_1, -Tw_1_16*Tx_1_6 + Tw_10_16, -Tw_15_9 + Tx_2_4, -Tw_2_16*Tx_0_6 + Tw_8_16, -Tw_1_16*Tx_0_0, -Tw_1_1 + Tx_3_3, -Tw_1_1*Tx_0_1 + Tw_11_9, -Tw_15_15 + Tx_2_2, -Tw_1_1*Tx_1_1 + Tw_9_9, -Tw_4_6 + Tx_2_4, -Tw_0_16*Tx_0_13 + Tw_15_16, -Tw_0_1*Tx_0_0 + Tw_7_12, -Tw_2_2*Tx_0_13 + Tw_7_2, -Tw_1_16 + Tx_1_13, -Tw_3_3 + Tx_1_1, -Tw_2_3 + Tx_0_1, -Tw_0_0*Tx_0_1, -Tw_2_3*Tx_1_13 + Tw_12_3, -Tw_2_3*Tx_0_1 + Tw_8_14, -Tw_2_2 + Tx_0_0, -Tw_2_3*Tx_0_13 + Tw_7_3, -Tw_2_16*Tx_0_1 + Tw_7_1, -Tw_1_16*Tx_1_1 + Tw_10_3, -Tw_0_0*Tx_0_6 + Tw_7_0, -Tw_0_0*Tx_0_0 + Tw_15_15, -Tw_6_6 + Tx_4_4, -Tw_2_2*Tx_1_6 + Tw_13_2, -Tw_2_3*Tx_0_0 - Tw_2_2*Tx_0_1 + Tw_8_13, -2*Tw_11_1 - Tw_1_1 + Tx_3_3, -Tw_1_16*Tx_0_1 + Tw_12_3, -Tw_0_16 + Tx_2_8, -Tw_0_16*Tx_0_6 + Tw_7_16, -Tw_1_1 + Tx_5_5, -Tw_4_5 + Tx_2_3, -2*Tw_11_16 - Tw_1_16 + Tx_3_7, -Tw_0_1 + Tx_0_1, -Tw_4_4 + Tx_2_2, -Tw_6_16 + Tx_4_9, -Tw_3_16*Tx_1_1 - Tw_3_3*Tx_1_6 + Tw_14_3, -Tw_2_3*Tx_1_1 + Tw_13_14, -Tw_2_2*Tx_0_0 + Tw_8_8, -Tw_0_1*Tx_0_1 + Tw_15_9, -Tw_0_1*Tx_0_6 + Tw_7_1, -Tw_5_6 + Tx_3_4, -Tw_2_16*Tx_0_0 - Tw_2_2*Tx_0_6 + Tw_8_2, -Tw_5_16 + Tx_3_9, -Tw_2_16*Tx_0_1 - Tw_2_3*Tx_0_6 + Tw_8_3, -Tw_2_3*Tx_0_1 + Tw_7_10, -Tw_3_3*Tx_1_1 + Tw_14_14, -Tw_1_16 + Tx_5_11, -Tw_0_16*Tx_0_1 + Tw_7_3, -Tw_0_16*Tx_0_0 - Tw_0_0*Tx_0_13 + Tw_15_0, -Tw_3_3*Tx_1_13 + Tw_10_3, -Tw_5_5 + Tx_3_3, -Tw_1_16*Tx_0_1 - Tw_1_1*Tx_0_13 + Tw_11_1, -Tw_1_1*Tx_0_0 + Tw_11_11, -Tw_9_9 + Tx_4_4, -Tw_0_0 + Tx_0_0, -Tw_3_3*Tx_1_1 + Tw_10_10, -Tw_9_9 + Tx_5_5, -Tw_2_2*Tx_1_1 + Tw_13_13, -Tw_0_16*Tx_0_0 + Tw_7_2, -Tw_0_1 + Tx_2_3, -Tw_0_16*Tx_0_1 - Tw_0_1*Tx_0_13 + Tw_15_1, -Tw_0_0*Tx_0_0 + Tw_7_7, -Tw_1_1*Tx_0_0 + Tw_12_12, -Tw_1_16*Tx_1_13 + Tw_9_16, -Tw_0_1 - Tw_15_1 + Tx_2_3, -Tw_2_16*Tx_0_0 + Tw_7_0, -2*Tw_11_11 + 2*Tx_3_3, -Tw_1_16*Tx_0_6 + Tw_12_16, -Tw_4_16 + Tx_2_9, -Tw_1_16 + Tx_3_8, -Tw_3_16*Tx_1_13 + Tw_10_16, -Tw_1_1*Tx_0_1 + Tw_12_10, -Tw_2_16*Tx_1_6 + Tw_13_16, -Tw_9_16 + Tx_5_10]
+
+
+remaining_vars = [Tw_0_0, Tw_0_1, Tw_0_16, Tw_1_1, Tw_1_16, Tw_2_2, Tw_2_3, Tw_2_16, Tw_3_3, Tw_3_16, Tw_4_4, Tw_4_5, Tw_4_6, Tw_4_16, Tw_5_5, Tw_5_6, Tw_5_16, Tw_6_6, Tw_6_16, Tw_7_0, Tw_7_1, Tw_7_2, Tw_7_3, Tw_7_7, Tw_7_10, Tw_7_12, Tw_7_16, Tw_8_2, Tw_8_3, Tw_8_8, Tw_8_13, Tw_8_14, Tw_8_16, Tw_9_9, Tw_9_16, Tw_10_1, Tw_10_3, Tw_10_10, Tw_10_16, Tw_11_1, Tw_11_9, Tw_11_11, Tw_11_16, Tw_12_1, Tw_12_2, Tw_12_3, Tw_12_10, Tw_12_12, Tw_12_16, Tw_13_2, Tw_13_3, Tw_13_13, Tw_13_14, Tw_13_16, Tw_14_3, Tw_14_14, Tw_14_16, Tw_15_0, Tw_15_1, Tw_15_9, Tw_15_11, Tw_15_15, Tw_15_16, Tx_0_0, Tx_0_1, Tx_0_6, Tx_0_13, Tx_1_1, Tx_1_6, Tx_1_13, Tx_2_2, Tx_2_3, Tx_2_4, Tx_2_7, Tx_2_8, Tx_2_9, Tx_3_3, Tx_3_4, Tx_3_7, Tx_3_8, Tx_3_9, Tx_4_4, Tx_4_7, Tx_4_9, Tx_5_5, Tx_5_10, Tx_5_11]
+
+zero_vars = {Tw_4_8: 0, Tw_9_2: 0, Tx_5_4: 0, Tw_3_4: 0, Tw_9_8: 0, Tw_9_14: 0, Tx_2_0: 0, Tx_4_6: 0, Tw_4_14: 0, Tw_1_14: 0, Tw_2_9: 0, Tx_5_3: 0, Tx_4_10: 0, Tw_4_3: 0, Tx_1_3: 0, Tw_4_2: 0, Tw_4_9: 0, Tw_5_15: 0, Tw_1_2: 0, Tw_0_5: 0, Tx_5_7: 0, Tw_0_4: 0, Tx_3_13: 0, Tw_3_15: 0, Tw_5_11: 0, Tw_3_14: 0, Tx_3_1: 0, Tw_4_11: 0, Tw_6_0: 0, Tx_1_4: 0, Tw_4_10: 0, Tx_5_6: 0, Tw_5_0: 0, Tx_4_13: 0, Tx_3_12: 0, Tx_3_5: 0, Tw_9_10: 0, Tx_2_1: 0, Tw_6_10: 0, Tw_5_12: 0, Tw_2_6: 0, Tx_0_7: 0, Tx_4_2: 0, Tw_9_6: 0, Tw_6_1: 0, Tx_2_12: 0, Tx_4_12: 0, Tw_9_5: 0, Tw_3_0: 0, Tw_1_0: 0, Tw_3_11: 0, Tw_1_11: 0, Tx_1_7: 0, Tw_0_7: 0, Tw_6_11: 0, Tx_4_1: 0, Tw_0_6: 0, Tw_0_13: 0, Tw_0_12: 0, Tw_5_13: 0, Tx_0_10: 0, Tx_2_10: 0, Tw_6_7: 0, Tw_0_2: 0, Tw_5_2: 0, Tx_0_3: 0, Tw_6_12: 0, Tx_5_13: 0, Tw_3_12: 0, Tw_5_1: 0, Tw_1_12: 0, Tw_0_14: 0, Tx_1_10: 0, Tx_0_9: 0, Tx_0_2: 0, Tw_5_14: 0, Tw_4_7: 0, Tw_2_14: 0, Tw_1_7: 0, Tw_0_9: 0, Tw_5_10: 0, Tw_5_9: 0, Tw_3_9: 0, Tx_5_9: 0, Tw_0_15: 0, Tx_4_5: 0, Tw_6_9: 0, Tw_4_15: 0, Tw_1_9: 0, Tw_2_15: 0, Tx_0_12: 0, Tw_6_15: 0, Tx_0_5: 0, Tx_2_11: 0, Tx_4_11: 0, Tw_1_8: 0, Tw_1_15: 0, Tx_5_2: 0, Tw_9_15: 0, Tw_6_8: 0, Tw_3_10: 0, Tw_0_3: 0, Tx_1_2: 0, Tw_0_10: 0, Tw_6_14: 0, Tx_5_8: 0, Tw_1_4: 0, Tw_2_10: 0, Tw_1_3: 0, Tw_9_4: 0, Tx_0_4: 0, Tw_9_3: 0, Tw_6_3: 0, Tw_3_5: 0, Tx_4_8: 0, Tx_3_0: 0, Tx_1_5: 0, Tx_5_0: 0, Tw_2_5: 0, Tw_0_11: 0, Tx_3_11: 0, Tx_1_9: 0, Tw_2_4: 0, Tw_2_11: 0, Tw_3_7: 0, Tx_4_3: 0, Tw_9_11: 0, Tw_3_6: 0, Tx_2_13: 0, Tx_2_6: 0, Tw_1_10: 0, Tw_2_0: 0, Tx_3_10: 0, Tx_1_8: 0, Tw_1_6: 0, Tw_6_2: 0, Tw_2_12: 0, Tw_4_12: 0, Tw_1_5: 0, Tx_4_0: 0, Tw_3_1: 0, Tx_2_5: 0, Tx_1_12: 0, Tw_9_12: 0, Tx_0_11: 0, Tw_5_8: 0, Tw_2_1: 0, Tw_4_1: 0, Tw_5_7: 0, Tx_5_1: 0, Tw_2_7: 0, Tw_4_0: 0, Tw_9_1: 0, Tw_2_13: 0, Tw_9_0: 0, Tw_9_7: 0, Tx_3_6: 0, Tx_1_11: 0, Tx_5_12: 0, Tw_6_13: 0, Tw_4_13: 0, Tw_5_3: 0, Tw_1_13: 0, Tw_3_13: 0, Tw_9_13: 0, Tx_0_8: 0, Tw_3_8: 0, Tw_2_8: 0, Tw_0_8: 0, Tw_10_15: 0, Tw_10_14: 0, Tw_15_10: 0, Tx_3_2: 0, Tw_10_6: 0, Tw_7_5: 0, Tw_7_11: 0, Tw_15_3: 0, Tw_10_4: 0, Tw_11_6: 0, Tw_14_5: 0, Tw_12_4: 0, Tw_7_14: 0, Tw_15_13: 0, Tw_8_6: 0, Tw_7_9: 0, Tw_10_9: 0, Tw_6_5: 0, Tw_11_5: 0, Tw_11_14: 0, Tw_13_15: 0, Tw_10_11: 0, Tw_12_15: 0, Tw_15_12: 0, Tw_12_5: 0, Tw_13_9: 0, Tw_8_12: 0, Tw_12_6: 0, Tw_15_4: 0, Tw_11_4: 0, Tw_14_1: 0, Tw_15_2: 0, Tw_13_5: 0, Tw_11_7: 0, Tw_8_4: 0, Tw_11_3: 0, Tw_15_7: 0, Tw_12_11: 0, Tw_7_6: 0, Tw_15_14: 0, Tw_8_7: 0, Tw_8_5: 0, Tw_7_8: 0, Tw_12_8: 0, Tw_11_8: 0, Tw_11_12: 0, Tw_10_13: 0, Tw_8_10: 0, Tw_7_4: 0, Tw_13_0: 0, Tw_13_4: 0, Tw_14_4: 0, Tw_10_0: 0, Tw_12_7: 0, Tw_11_13: 0, Tw_12_0: 0, Tw_8_0: 0, Tw_15_8: 0, Tw_11_2: 0, Tw_10_7: 0, Tw_6_4: 0, Tw_11_10: 0, Tw_10_5: 0, Tw_8_15: 0, Tx_1_0: 0, Tw_8_1: 0, Tw_13_7: 0, Tw_13_10: 0, Tw_14_6: 0, Tw_14_7: 0, Tw_14_10: 0, Tw_15_5: 0, Tw_8_9: 0, Tw_12_14: 0, Tw_13_11: 0, Tw_13_12: 0, Tw_14_0: 0, Tw_12_13: 0, Tw_15_6: 0, Tw_14_9: 0, Tw_12_9: 0, Tw_13_1: 0, Tw_7_15: 0, Tw_10_8: 0, Tw_14_15: 0, Tw_13_6: 0, Tw_7_13: 0, Tw_8_11: 0, Tw_14_12: 0, Tw_14_11: 0, Tw_11_15: 0, Tw_10_12: 0, Tw_10_2: 0, Tw_5_4: 0, Tw_13_8: 0, Tw_11_0: 0, Tw_14_8: 0, Tw_3_2: 0, Tw_14_2: 0, Tw_14_13: 0}
+
 
 print("simplified eqs:", len(simplified_eqs), simplified_eqs)
 print("remaining_vars:", remaining_vars)
@@ -1657,20 +1674,159 @@ print("Remaining equations:")
 for (e,i) in zip(coeff_eqs,range(0,len(coeff_eqs))):
     print(" ", i, ": ", e)
 
-sols = [{v: 0 for v in zero_vars}]
+nullified_vars = {v: 0 for v in zero_vars}
 
-print_solutions(sols)
+print_solutions([nullified_vars])
 
 # Here I still solve coef_eqs that are symbolic.
 
-print("...Solving the system of equations (takes time)...")
-#sols = solve(coeff_eqs, Tw_vars_flat + Tx_vars_flat, solution_dict=True, algorithm='maxima')
-#sols = solve(coeff_eqs, Tw_vars_flat + Tx_vars_flat, solution_dict=True, algorithm='maxima',
+# Every witness variable must be used at least once!!!
+
+#nonzero_part = [v != 0 for v in diagonal_witness_vars if v in remaining_vars]
+
+
+# Your constraint: sum(nonzero_column) != 0
+# Algebraically: introduce slack variable s_i with s_i * sum(nonzero_column) = 1
+
+constraint_eqs = []
+slack_vars = []
+
+nonzero_columns = [[Tws[j][i]^2 for j in range(m) if Tws[j][i] in remaining_vars] for i in range(m)]
+for i, nonzero_column in enumerate(nonzero_columns):
+    if len(nonzero_column) > 0:
+        s_i = var(f's_{i}')  # slack variable
+        slack_vars.append(s_i)
+
+        # sum(Tws[j][i]^2 for j in range(m)) * s_i - 1 = 0
+        constraint_eq = sum(nonzero_column) * s_i - 1
+        constraint_eqs.append(constraint_eq)
+
+        print(f"Column {i}: {sum(nonzero_column)} ≠ 0")
+
+
+p = 101  # your prime
+F = GF(p)
+var_names = [str(v) for v in sol_vars] + [f's_{i}' for i in range(len(nonzero_columns))]
+R = PolynomialRing(F, var_names, order='lex')
+
+# Convert equations to finite field polynomial ring
+polynomial_eqs = []
+for eq in coeff_eqs:
+    poly_eq = R(eq)
+    polynomial_eqs.append(poly_eq)
+
+# Add non-degeneracy constraints
+for i, nonzero_column in enumerate(nonzero_columns):
+    s_i = R(f's_{i}')
+    sum_squares = sum(R(term) for term in nonzero_column)
+    constraint = sum_squares * s_i - 1
+    polynomial_eqs.append(constraint)
+
+print("Computing the groebner basis")
+I = ideal(polynomial_eqs)
+print("Ideal: ", I)
+
+gb = I.groebner_basis()
+print("Groebner basis: ", gb)
+
+
+# Look at your Gröbner basis
+print("Gröbner basis:")
+for i, poly in enumerate(gb):
+    print(f"{i}: {poly}")
+
+
+# Identify free variables (those not appearing as leading terms)
+leading_vars = [poly.lm().variables()[0] for poly in gb if poly.lm().variables()]
+all_vars = set(R.gens())
+free_vars = all_vars - set(leading_vars)
+print(f"Free variables: {free_vars}")
+print(f"Constrained variables: {leading_vars}")
+
+# Extract fixed variables
+fixed_vars = {}
+interesting_equations = []
+
+for poly in gb:
+    vars_in_poly = poly.variables()
+
+    if len(vars_in_poly) == 1 and poly.degree() == 1:
+        # Linear equation in single variable: ax + b = 0
+        var = vars_in_poly[0]
+        # For poly = var - constant, we get var = constant
+        # For poly = var, we get var = 0
+        constant_term = -poly.constant_coefficient()
+        leading_coeff = poly.leading_coefficient()
+        value = constant_term / leading_coeff
+        fixed_vars[var] = value
+
+
+    elif len(vars_in_poly) > 1 or poly.degree() > 1:
+        # Multi-variable or nonlinear equations are "interesting"
+        interesting_equations.append(poly)
+
+    # Skip equations that are just "0 = 0" (shouldn't happen in reduced GB)
+
+print(f"Fixed variables ({len(fixed_vars)}):")
+for var, val in sorted(fixed_vars.items()):
+    print(f"  {var} = {val}")
+
+print(f"\nInteresting equations ({len(interesting_equations)}):")
+for i, eq in enumerate(interesting_equations):
+    print(f"  {i}: {eq} = 0")
+
+# Get truly free variables
+all_vars = set(R.gens())
+constrained_vars = set(fixed_vars.keys()) | set().union(*[eq.variables() for eq in interesting_equations])
+free_vars = all_vars - constrained_vars
+
+print(f"\nall_vars variables ({len(all_vars)}): {sorted(all_vars)}")
+print(f"\nconstrained_vars variables ({len(constrained_vars)}): {sorted(constrained_vars)}")
+print(f"\nTotally free unconstrained variables ({len(free_vars)}): {sorted(free_vars)}")
+
+
+#sols = [{poly_to_sym(k): v for k, v in (fixed_vars | nullified_vars).items()}]
+sols = [({SR(str(k)): int(v) for k,v in fixed_vars.items()} | nullified_vars)]
+
+#print("fixed_vars types:")
+#for k, v in fixed_vars.items():
+#    print(f"  {k} (type: {type(k)}) -> {v} (type: {type(v)})")
+#
+#print("\nnullified_vars types:")
+#for k, v in nullified_vars.items():
+#    print(f"  {k} (type: {type(k)}) -> {v} (type: {type(v)})")
+#
+#print("\nCombined dict types:")
+#combined = {SR(str(k)): v for k,v in fixed_vars.items()} | nullified_vars
+#for k, v in combined.items():
+#    print(f"  {k} (type: {type(k)}) -> {v} (type: {type(v)})")
+#
+
+print_solutions(sols)
+
+#Traceback (most recent call last):
+#  File "/home/volhovm/code/algebraic-zk-experiments/controlled-malleability.sage.py", line 1784, in <module>
+#    sols = [{poly_to_sym(k): v for k, v in (fixed_vars | nullified_vars).items()}]
+#             ~~~~~~~~~~~^^^
+#  File "/home/volhovm/code/algebraic-zk-experiments/controlled-malleability.sage.py", line 1499, in poly_to_sym
+#    print(poly.subs(to_sym_map))
+#          ~~~~~~~~~^^^^^^^^^^^^
+#  File "sage/rings/polynomial/multi_polynomial_libsingular.pyx", line 3624, in sage.rings.polynomial.multi_polynomial_libsingular.MPolynomial_libsingular.subs (build/cythonized/sage/rings/polynomial/multi_polynomial_libsingular.cpp:36057)
+#    raise TypeError("keys do not match self's parent")
+#TypeError: keys do not match self's parent
+#make: *** [Makefile:2: run] Error 1
+
+
+raise SystemExit(0)
+
+print("...Solving the nontrivial part of the system of equations (takes time)...")
+sols = solve(coeff_eqs, sol_vars, solution_dict=True, algorithm='maxima')
+#sols = solve(coeff_eqs, sol_vars, solution_dict=True, algorithm='maxima',
 #             multiplicities=False,       # Don't compute multiplicities
 #             to_poly_solve='force',      # Force polynomial solving
 #             domain=F           # Or 'real' if you want real solutions only
 #             )
-sols = solve(coeff_eqs, sol_vars, solution_dict=True, algorithm='sympy')
+#sols = solve(coeff_eqs, sol_vars, solution_dict=True, algorithm='sympy')
 
 #from sympy import solve as sympy_solve
 #from sympy import symbols
@@ -1683,6 +1839,8 @@ sols = solve(coeff_eqs, sol_vars, solution_dict=True, algorithm='sympy')
 #sols = solve(coeff_eqs, Tw_vars_flat + Tx_vars_flat, solution_dict=True, algorithm='fricas')
 #sols = iterative_solve(coeff_eqs, Tw_vars_flat + Tx_vars_flat)
 
+# Add zero solutions
+sols = [s | nullified_vars for s in sols]
 
 print("------------ ", len(sols)," solutions")
 
