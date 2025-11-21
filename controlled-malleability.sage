@@ -96,10 +96,10 @@ def print_coeff(eq,mon):
 
 
 
-nx = 6            # number of instance elements
-ntheta = 6        # number of theta elems
+nx = 3            # number of instance elements
+ntheta = 1        # number of theta elems
 n = nx + ntheta   # number of equations
-m = 16             # number of witness elements
+m = 7             # number of witness elements
 nh = 7            # number of random bases
 
 hs = [var('H%d' % i) for i in range(nh)]
@@ -469,89 +469,89 @@ def def_language(inst):
 
 
 
-    mat[0][0] = 1
-    mat[0][2] = hs[0]
+    #mat[0][0] = 1
+    #mat[0][2] = hs[0]
 
-    mat[1][1] = 1
-    mat[1][3] = hs[0]
+    #mat[1][1] = 1
+    #mat[1][3] = hs[0]
 
-    mat[2][15] = hs[1]
-    mat[2][0] = hs[1] + hs[2]
-    mat[2][4] = hs[3]
+    #mat[2][15] = hs[1]
+    #mat[2][0] = hs[1] + hs[2]
+    #mat[2][4] = hs[3]
 
-    mat[3][1] = hs[1] + hs[2]
-    mat[3][11] = 2 * hs[1]
-    mat[3][5] = hs[3]
+    #mat[3][1] = hs[1] + hs[2]
+    #mat[3][11] = 2 * hs[1]
+    #mat[3][5] = hs[3]
 
-    mat[4][9] = hs[1]
-    mat[4][6] = hs[3]
+    #mat[4][9] = hs[1]
+    #mat[4][6] = hs[3]
 
-    mat[5][9] = hs[4]
-    mat[5][1] = hs[5]
+    #mat[5][9] = hs[4]
+    #mat[5][1] = hs[5]
 
-    mat[6][2] = inst[0]
-    mat[6][7] = -1
-    mat[6][8] = -hs[0]
-    vec[0] = 0
+    #mat[6][2] = inst[0]
+    #mat[6][7] = -1
+    #mat[6][8] = -hs[0]
+    #vec[0] = 0
 
-    mat[7][1] = inst[1]
-    mat[7][9] = -1
-    mat[7][10] = -hs[0]
-    vec[1] = 0
+    #mat[7][1] = inst[1]
+    #mat[7][9] = -1
+    #mat[7][10] = -hs[0]
+    #vec[1] = 0
 
-    mat[8][1] = inst[0]
-    mat[8][11] = -1
-    mat[8][12] = -hs[0]
-    vec[2] = 0
+    #mat[8][1] = inst[0]
+    #mat[8][11] = -1
+    #mat[8][12] = -hs[0]
+    #vec[2] = 0
 
-    mat[9][2] = inst[1]
-    mat[9][12] = -1
-    mat[9][13] = -hs[0]
-    vec[3] = 0
+    #mat[9][2] = inst[1]
+    #mat[9][12] = -1
+    #mat[9][13] = -hs[0]
+    #vec[3] = 0
 
-    mat[10][3] = inst[1]
-    mat[10][10] = -1
-    mat[10][14] = -hs[0]
-    vec[4] = 0
+    #mat[10][3] = inst[1]
+    #mat[10][10] = -1
+    #mat[10][14] = -hs[0]
+    #vec[4] = 0
 
-    mat[11][0] = inst[0]
-    mat[11][15] = -1
-    mat[11][7] = -hs[0]
-    vec[5] = 0
-
-    # THIS ONE MUST BE DISABLED
-    #mat[11][3] = inst[0]
+    #mat[11][0] = inst[0]
     #mat[11][15] = -1
-    #mat[11][13] = -hs[0]
+    #mat[11][7] = -hs[0]
     #vec[5] = 0
 
+    ## THIS ONE MUST BE DISABLED
+    ##mat[11][3] = inst[0]
+    ##mat[11][15] = -1
+    ##mat[11][13] = -hs[0]
+    ##vec[5] = 0
 
-    ## WHEN w0 is known: w0 -> w0 + w1
-    param_solution = { x_0: rr_0 + H0 * rr_2,
-                       x_1: rr_1 + H0 * rr_3,
-                       x_2: H1 * (rr_0 * rr_0 + rr_0) + H2 * rr_0 + H3 * rr_4,
-                       x_3: H1 * (2 * rr_0 * rr_1 + rr_1) + H2 * rr_1 + H3 * rr_5,
-                       x_4: H1 * (rr_1 * rr_1) + H3 * rr_6,
-                       x_5: H4 * (rr_1 * rr_1) + H5 * rr_1,
-                       w_0: rr_0,
-                       w_1: rr_1,
-                       w_2: rr_2,
-                       w_3: rr_3,
-                       w_4: rr_4,
-                       w_5: rr_5,
-                       w_6: rr_6,
-                       w_7: rr_0 * rr_2,
-                       w_8: rr_2 * rr_2,
-                       w_9: rr_1 * rr_1,
-                       w_10: rr_3 * rr_1,
-                       w_11: rr_0 * rr_1,
-                       w_12: rr_2 * rr_1,
-                       w_13: rr_2 * rr_3,
-                       w_14: rr_3 * rr_3,
-                       w_15: rr_0 * rr_0,
-                       #w_15: rr_0 * rr_3,
-                      }
-    param_values = [ ]
+
+    ### WHEN w0 is known: w0 -> w0 + w1
+    #param_solution = { x_0: rr_0 + H0 * rr_2,
+    #                   x_1: rr_1 + H0 * rr_3,
+    #                   x_2: H1 * (rr_0 * rr_0 + rr_0) + H2 * rr_0 + H3 * rr_4,
+    #                   x_3: H1 * (2 * rr_0 * rr_1 + rr_1) + H2 * rr_1 + H3 * rr_5,
+    #                   x_4: H1 * (rr_1 * rr_1) + H3 * rr_6,
+    #                   x_5: H4 * (rr_1 * rr_1) + H5 * rr_1,
+    #                   w_0: rr_0,
+    #                   w_1: rr_1,
+    #                   w_2: rr_2,
+    #                   w_3: rr_3,
+    #                   w_4: rr_4,
+    #                   w_5: rr_5,
+    #                   w_6: rr_6,
+    #                   w_7: rr_0 * rr_2,
+    #                   w_8: rr_2 * rr_2,
+    #                   w_9: rr_1 * rr_1,
+    #                   w_10: rr_3 * rr_1,
+    #                   w_11: rr_0 * rr_1,
+    #                   w_12: rr_2 * rr_1,
+    #                   w_13: rr_2 * rr_3,
+    #                   w_14: rr_3 * rr_3,
+    #                   w_15: rr_0 * rr_0,
+    #                   #w_15: rr_0 * rr_3,
+    #                  }
+    #param_values = [ ]
 
 
     # !lang6
@@ -628,6 +628,51 @@ def def_language(inst):
     #                  }
     #param_values = [ ]
 
+
+    # !lang8
+    # w0 -> alpha w0
+    # w1 -> alpha^2 w1
+    # NOTE: this can be used to enforce all kinds of alpha^i beta^j
+    # We can also similarly enforce that alpha^i = beta^j by forcing (w0^2 + w1^3) to
+    #   be updated by a single scaling.
+    ###################################################################################
+
+    # x0 = H0^w0 H1^w2
+    # x1 = H2^w1 H3^w3
+    # x3 = H4^{w0^2} H5^{w1} H6^{w4}
+
+    # 1 = x0^w0 H0^{-w6} H1^{-w7}
+    #   => w5 = w0^2
+    #   => w6 = w0w2
+
+    mat[0][0] = hs[0]
+    mat[0][2] = hs[1]
+
+    mat[1][1] = hs[2]
+    mat[1][3] = hs[3]
+
+    mat[2][5] = hs[4]
+    mat[2][1] = hs[5]
+    mat[2][4] = hs[6]
+
+    # w5 = w0^2
+    mat[3][0] = inst[0]
+    mat[3][5] = -hs[0]
+    mat[3][6] = -hs[1]
+    vec[0] = 0
+
+    param_solution = { x_0: H0 * rr_0 + H1 * rr_2,
+                       x_1: H2 * rr_1 + H3 * rr_3,
+                       x_2: H4 * rr_0 * rr_0 + H5 * rr_1 + H6 * rr_4,
+                       w_0: rr_0,
+                       w_1: rr_1,
+                       w_2: rr_2,
+                       w_3: rr_3,
+                       w_4: rr_4,
+                       w_5: rr_0 * rr_0,
+                       w_6: rr_2 * rr_0,
+                      }
+    param_values = [ ]
 
     # Some old languages
     ###################################################################################
@@ -1464,8 +1509,8 @@ def reassign_vars(R,varlists):
     return (to_sym_map,ret)
 
 # Ringvars are the "Trapdoors" over which we want to extract AGM sub-equations
-#ringvars = [hs, eq_basic_params]
-ringvars = [hs, [e for e in eq_basic_params if e != rr_vars[0]]]
+ringvars = [hs, eq_basic_params]
+#ringvars = [hs, [e for e in eq_basic_params if e != rr_vars[0]]]
 #ringvars = [[h for h in hs if h != hs[1]], xs, ws, zs, eq_basic_params]
 print("ringvars: ", ringvars)
 R = PolynomialRing(SR, concat(ringvars))
@@ -1632,108 +1677,109 @@ print_solutions([nullified_vars])
 # Your constraint: sum(nonzero_column) != 0
 # Algebraically: introduce slack variable s_i with s_i * sum(nonzero_column) = 1
 
-# For constraint: sum(Tws[j][i] for j in range(m)) != 0 for each i
-constraint_eqs = []
-slack_vars = [f's_{i}' for i in range(m)]
-
-p = 65521
-F = GF(p)
-var_names = [str(v) for v in sol_vars] + slack_vars + [rr_0]
-R = PolynomialRing(F, var_names, order='degrevlex')
-
-# Convert your existing equations
-polynomial_eqs = []
-for eq in coeff_eqs:
-    poly_eq = R(eq)
-    polynomial_eqs.append(poly_eq)
-
-# Add nonzero constraints: sum_i * s_i = 1
-for i in range(m):
-    s_i = R(f's_{i}')
-    column_sum = sum(R(str(Tws[j][i])) for j in range(m) if Tws[j][i] in remaining_vars)
-    # This forces column_sum != 0 (since it must have multiplicative inverse s_i)
-    constraint = column_sum * s_i - 1
-    polynomial_eqs.append(constraint)
-
-with open("msolve-cm-output.ms", "w") as f:
-    f.write(','.join([str(s) for s in var_names]))
-    f.write("\n")
-    f.write("0\n")
-    for p in polynomial_eqs:
-        f.write(str(p) + ",\n")
-
-
-print("Computing the groebner basis")
-I = ideal(polynomial_eqs)
-print("Ideal: ", I)
-
-gb = I.groebner_basis(algorithm='msolve')
-print("Groebner basis: ", gb)
-
-
-# Look at your Gröbner basis
-print("Gröbner basis:")
-for i, poly in enumerate(gb):
-    print(f"{i}: {poly}")
-
-
-# Identify free variables (those not appearing as leading terms)
-leading_vars = [poly.lm().variables()[0] for poly in gb if poly.lm().variables()]
-all_vars = set(R.gens())
-free_vars = all_vars - set(leading_vars)
-print(f"Free variables: {free_vars}")
-print(f"Constrained variables: {leading_vars}")
-
-# Extract fixed variables
-fixed_vars = {}
-interesting_equations = []
-
-for poly in gb:
-    vars_in_poly = poly.variables()
-
-    if len(vars_in_poly) == 1 and poly.degree() == 1:
-        # Linear equation in single variable: ax + b = 0
-        var = vars_in_poly[0]
-        # For poly = var - constant, we get var = constant
-        # For poly = var, we get var = 0
-        constant_term = -poly.constant_coefficient()
-        leading_coeff = poly.leading_coefficient()
-        value = constant_term / leading_coeff
-        fixed_vars[var] = value
-
-
-    elif len(vars_in_poly) > 1 or poly.degree() > 1:
-        # Multi-variable or nonlinear equations are "interesting"
-        interesting_equations.append(poly)
-
-    # Skip equations that are just "0 = 0" (shouldn't happen in reduced GB)
-
-print(f"Fixed variables ({len(fixed_vars)}):")
-for var, val in sorted(fixed_vars.items()):
-    print(f"  {var} = {val}")
-
-print(f"\nInteresting equations ({len(interesting_equations)}):")
-for i, eq in enumerate(interesting_equations):
-    print(f"  {i}: {eq} = 0")
-
-# Get truly free variables
-all_vars = set(R.gens())
-constrained_vars = set(fixed_vars.keys()) | set().union(*[eq.variables() for eq in interesting_equations])
-free_vars = all_vars - constrained_vars
-
-print(f"\nall_vars variables ({len(all_vars)}): {sorted(all_vars)}")
-print(f"\nconstrained_vars variables ({len(constrained_vars)}): {sorted(constrained_vars)}")
-print(f"\nTotally free unconstrained variables ({len(free_vars)}): {sorted(free_vars)}")
-
-
-#sols = [{poly_to_sym(k): v for k, v in (fixed_vars | nullified_vars).items()}]
-sols = [({SR(str(k)): int(v) for k,v in fixed_vars.items()} | nullified_vars)]
-
-
-print_solutions(sols)
-
-
-raise SystemExit(0)
+## For constraint: sum(Tws[j][i] for j in range(m)) != 0 for each i
+#constraint_eqs = []
+#slack_vars = [f's_{i}' for i in range(m)]
+#
+#p = 65521
+#F = GF(p)
+#var_names = [str(v) for v in sol_vars] + slack_vars
+##var_names = [str(v) for v in sol_vars] + slack_vars + [rr_0]
+#R = PolynomialRing(F, var_names, order='degrevlex')
+#
+## Convert your existing equations
+#polynomial_eqs = []
+#for eq in coeff_eqs:
+#    poly_eq = R(eq)
+#    polynomial_eqs.append(poly_eq)
+#
+## Add nonzero constraints: sum_i * s_i = 1
+#for i in range(m):
+#    s_i = R(f's_{i}')
+#    column_sum = sum(R(str(Tws[j][i])) for j in range(m) if Tws[j][i] in remaining_vars)
+#    # This forces column_sum != 0 (since it must have multiplicative inverse s_i)
+#    constraint = column_sum * s_i - 1
+#    polynomial_eqs.append(constraint)
+#
+#with open("msolve-cm-output.ms", "w") as f:
+#    f.write(','.join([str(s) for s in var_names]))
+#    f.write("\n")
+#    f.write("0\n")
+#    for p in polynomial_eqs:
+#        f.write(str(p) + ",\n")
+#
+#
+#print("Computing the groebner basis")
+#I = ideal(polynomial_eqs)
+#print("Ideal: ", I)
+#
+#gb = I.groebner_basis(algorithm='msolve')
+#print("Groebner basis: ", gb)
+#
+#
+## Look at your Gröbner basis
+#print("Gröbner basis:")
+#for i, poly in enumerate(gb):
+#    print(f"{i}: {poly}")
+#
+#
+## Identify free variables (those not appearing as leading terms)
+#leading_vars = [poly.lm().variables()[0] for poly in gb if poly.lm().variables()]
+#all_vars = set(R.gens())
+#free_vars = all_vars - set(leading_vars)
+#print(f"Free variables: {free_vars}")
+#print(f"Constrained variables: {leading_vars}")
+#
+## Extract fixed variables
+#fixed_vars = {}
+#interesting_equations = []
+#
+#for poly in gb:
+#    vars_in_poly = poly.variables()
+#
+#    if len(vars_in_poly) == 1 and poly.degree() == 1:
+#        # Linear equation in single variable: ax + b = 0
+#        var = vars_in_poly[0]
+#        # For poly = var - constant, we get var = constant
+#        # For poly = var, we get var = 0
+#        constant_term = -poly.constant_coefficient()
+#        leading_coeff = poly.leading_coefficient()
+#        value = constant_term / leading_coeff
+#        fixed_vars[var] = value
+#
+#
+#    elif len(vars_in_poly) > 1 or poly.degree() > 1:
+#        # Multi-variable or nonlinear equations are "interesting"
+#        interesting_equations.append(poly)
+#
+#    # Skip equations that are just "0 = 0" (shouldn't happen in reduced GB)
+#
+#print(f"Fixed variables ({len(fixed_vars)}):")
+#for var, val in sorted(fixed_vars.items()):
+#    print(f"  {var} = {val}")
+#
+#print(f"\nInteresting equations ({len(interesting_equations)}):")
+#for i, eq in enumerate(interesting_equations):
+#    print(f"  {i}: {eq} = 0")
+#
+## Get truly free variables
+#all_vars = set(R.gens())
+#constrained_vars = set(fixed_vars.keys()) | set().union(*[eq.variables() for eq in interesting_equations])
+#free_vars = all_vars - constrained_vars
+#
+#print(f"\nall_vars variables ({len(all_vars)}): {sorted(all_vars)}")
+#print(f"\nconstrained_vars variables ({len(constrained_vars)}): {sorted(constrained_vars)}")
+#print(f"\nTotally free unconstrained variables ({len(free_vars)}): {sorted(free_vars)}")
+#
+#
+##sols = [{poly_to_sym(k): v for k, v in (fixed_vars | nullified_vars).items()}]
+#sols = [({SR(str(k)): int(v) for k,v in fixed_vars.items()} | nullified_vars)]
+#
+#
+#print_solutions(sols)
+#
+#
+#raise SystemExit(0)
 
 print("...Solving the nontrivial part of the system of equations (takes time)...")
 sols = solve(coeff_eqs, sol_vars, solution_dict=True, algorithm='maxima')
