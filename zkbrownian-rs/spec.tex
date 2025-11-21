@@ -1,0 +1,95 @@
+This doc is incomplete and inconsistent!
+
+So we're designing a very simple ``forwarding'' protocol where parties forward messages (packets) and ZK-prove their forwards correctly.
+
+
+\begin{description}
+    \item[$\Setup(\secparam,N,M) \to \pp$] takes the number of nodes $N$ in the graph where each node has maximum out-degree $M$. $M$ may not be used.
+    \item[$\Commit(i,w_{i,1},\dots,w_{i,M};r) \to C_i$] lets node $i$ commit to the outgoing weights $w_{i,1},\dots,w_{i,M}$ with randomness $r$.
+    \item[$\mathsf{Merge}(C_1,\dots,C_N) \to C$] Merges all committed weights $C_i$ into a single matrix of all weights.
+    \item[$\KeyGen() \to \sk,\pk$] allows each node to generate a key pair
+    \item[$\Diversify(\pk,d) \to \ppk_d$] Creates a diversified public key that is unlinkable with respect to the original public key.
+    \item[$\Spawn(\sk,\pid,\sid) \to m$] lets a node with $\sk$ create a new message $m$ to send. $\pid$ is a packet id from 0 to $\#\mathsf{users}$ and $\sid$ is the epoch.
+    \item[$\Forward(m,h,(w_1,\pk_1),\dots,(w_M,\pk_M),C,\sk) \to m',k_R,d$] Takes a message $m$ which is $h$ hops old (they start with 0 at spawn). A list of weights and public keys of the peer at this edge $(w_j,\pk_j)$ and the secret key $\sk$ of the forwarder. It outputs a new message $m'$, index of receiver $k_R$, and a diversifier $d$. The message should be forwarded to the node with key $\ppk_d = \Diversify(\pk_{k_R},d)$.
+    \item[$\Verify(m,h,C,P) \to \{0,1\}$] verifies a message $m$ after $h$ hops to be consistent with the weight matrix $C$, the public keys of all node $P=\{\pk_1,\dots,\pk_N\}$.
+    \item[$\Encrypt(m,\ppk) \to l$] encrypts a message to the recipient party.
+    \item[$\Decrypt(l,\sk) \to m \lor \bot$] decrypts an anonymous broadcast message $l$ and if it is intended for use with $\sk$ get the message. If not intended, returns $\bot$.
+    \item[$\GenerateCert(\sid,\{m_i\}_{i=1}^n,\sk,d) \to \mathsf{cert}$] Takes as input $n$ messages, each of age $\nu_{\mathsf{max}}$ hops, all related to the session id $\sid$.
+    Creates a certificate of validity effectively attesting that $\ppk_d$ received $n$ packets in the session with id $\sid$ with the maximum possible hop lifetime $\nu_{\mathsf{max}}$.
+    \item[$\VerifyCert(\sid,n,\ppk_d,\mathsf{cert}) \to \{0,1\}$] Verifies the certificate of routing validity with respect to the session id, pseudorandom public key, and its claimed number of received packets $n$.
+\end{description}
+
+{$\underline{\Spawn(\pk,\sk,\pid,\sid)}$ }
+    \begin{algorithmic_small}
+    \State Generate $\ppk_0 \gets \Hash(\pid,\sid)^\sk$
+    \State Generate $\pi_0$, attesting to (1) $\ppk$ is indeed derived as public hash to secret key exponent, (2) secret key is corresponding to the public key which is a member of the full list of public keys.
+    \State $m \gets (\pid,\sid,\{\},\ppk_0,\pi_0)$
+    \FullReturn $m$
+    \end{algorithmic_small}
+    \bigskip
+
+
+    {$\underline{\Forward(\pk_\nu,\sk_\nu,m = (\pid,\sid,\{\ppk_i, \phi_i, \pi_i\}_{i=1}^{\nu}, \ppk_0, \pi_0))}$ }
+    \begin{algorithmic_small}
+    \State Check that $\nu \le \nu_{\mathsf{max}}$, if false abort.
+    \State Derive $\theta \gets \Hash(\phi_{\nu}, \sid, \pid,  \nu)$, where $\phi_0 = 0$ (or some other dummy value)
+    \State Derive $\phi_{\nu+1} \gets G^{1/(\theta+\sk)}$
+    \State According to $\rho_{\nu+1} \gets \mathsf{First32Bits}(\phi_{\nu+1})$ and the matrix $C$, select a $\pk_{\nu+1}$, the next hop neighbour with the index $k_R$.
+    \State Sample random $d$ and derive $\ppk_{\nu+1} \gets (\pk_{\nu+1}^d,G^d)$.
+    \State Generate a proof $\pi_{\nu+1}$ of validity of (1) ownership of $m$ w.r.t. $\ppk_\nu$ and $\sk$ (hidden), (2) selection of $\pk_{\nu+1}$ (hidden) according to $\rho_{\nu+1}$, (3) correct derivation of $\ppk_{\nu+1}$ relatively to $\pk_{\nu+1}$, (4) correct derivation of PRF $\phi_{\nu+1}$ from $\theta$ and $\sk$ corresponding to $\ppk_\nu$.
+    \State Post $(m' = (\pid,\sid,\{\ppk_i,\phi_i,\pi_i\}_{i=1}^{\nu+1},\ppk_0,\pi_0), k_R, d)$ anonymously to the bulletin board addressed to $\ppk_{\nu+1}$.
+    \end{algorithmic_small}
+
+    \bigskip
+
+    {$\underline{\Verify(\pk_\nu,\sk_\nu,m = (\pid,\sid,\{\ppk_i, \phi_i, \pi_i\}_{i=1}^{\nu}, \ppk_0, \pi_0))}$ }
+    \begin{algorithmic_small}
+    \State Verify $\pi_0$ w.r.t. $\ppk_0$
+    \State For each $i$ verify $\pi_i$ with respect to $\ppk_i,\ppk_{i-1}, \ldots$
+    \end{algorithmic_small}
+
+Groth16 proofs are randomisable, also one can do commit-and-proof and rerandomise the commitment while keeping the proof the same (see SAVER). To hash the public key there are several options:
+\begin{itemize}
+    \item Use two curves / two Schnorrs, and make $\pk = G_2^\sk$ in the second group, while $\pk' = H_1^{\pk_x} H_2^{\pk_y}$ in the first group, and use $(\pk_x,\pk_y)$ as hash input.
+    To bridge between these two Schnorrs without revealing the public key one has to blind it in the Schnorr for the second group, like $C = \pk H^r$ and then prove that $(C_x,C_y)$ represent a point $(\pk_x,\pk_y)$ blinded so, in the first Schnorr.
+    This extra step is what Curve Trees paper does, and it (probably) costs about 250-300 constraints (about $3 \lambda$ in R1CS)?
+    \item We could take $\pk' = \mathsf{Poseidon}(\sk)$ and use $\pk'$ instead of $\pk$ in some cases?
+    \item Kiwi commitments by Felix?
+\end{itemize}
+
+Change of notation: $\md$ is Merkle digest, generators in $\GG_1$ are $G_i$, and in $\GG_2$ are $H_i$.
+
+That's how the proofs would look like (first three are pre-generated):
+\begin{enumerate}
+\item $\pi_{1}$ groth16 in $\GG_1$
+\begin{itemize}
+    \item Attests to $(\pk,\md_{2,k_s}) \in MT(\md_1)$: it verifies w.r.t. $C_1 = G_1^{\pk_x} G_2^{\pk_y} G_3^{\md_{2,k_s}} H^r$.
+\end{itemize}
+\item $\pi_2$ groth16 or catalano-fiore in $\GG_1$. Weights sub-tree (this might be replacable by a modification of Catalano-Fiore, see e.g. eprint 2019/1255 on zk set membership)
+\begin{itemize}
+    \item Input: commitments $C_{v,1},C_{v,2}$ to $v_1,v_2$, also $C_1,C_3$
+    \item Merkle tree root $\md_{2,k_s}$ on $\mathsf{path}_2$ opens to $(\pk_{r,x},\pk_{r,y},v_2)$ (receiver pos)
+    \item Merkle tree root $\md_{2,k_s}$ on $\mathsf{path}_2'$ (the prime path is the previous element) opens to $(\pk_{pr,x},\pk_{pr,y},v_1)$ (pre receiver pos)
+    \item $\mathsf{BinRepr}(\mathsf{path}_2') = \mathsf{BinRepr}(\mathsf{path}_2) - 1$
+\end{itemize}
+\item $\pi_{3}$ groth16 in $\GG_1$
+\begin{itemize}
+    \item Attests to $(\pk_r,\md_{2,k_r}) \in MT(\md_{2,k_s})$: it verifies w.r.t. $C_3 = G_1^{\pk_{r,x}} G_2^{\pk_{r,y}} G_3^{\md_{2,k_r}} H^r$.
+\end{itemize}
+\item $\pi_{4,\GG_1}$, a "lightweight" Schnorr in $\GG_1$ for bridging $\pi_{1\ldots 3}$ with $\pi_{5}$ (in different group).
+\begin{itemize}
+    \item Input: $\pk^*$ and $\pk^*_r$ in $(x,y)$ shape: $G^{\pk^*_{x}}, G^{\pk^*_{y}}$, same for recepient pk. $C_1,C_3$. $C_{v,1},C_{v,2}$, $G^\rho$
+    \item Proves: $\pk^* = \pk \cdot H^r$ in coordinate form. I.e. two elements $\pk^{*}_{x,y}$ correctly represent $(\pk_x,\pk_y)$ plus some randomiser. Same for recipient: $\pk^*_r = \pk_r \cdot H^r$ in coordinate form.
+    \misha{TODO: we can create one commitment containing both $\pk^*, \pk^*_r$, and only pay randomiser opening once here}
+    \item An opening of $C_1$ ($C_1$ is opened correctly w.r.t. those $\pk_x,\pk_y$ but also $\md_{2,k_s}$ and some random element.) and $C_3$ similarly.
+    \item Proves: Opening of $C_1,C_3$ as in $\pi_1,\pi_2,\pi_3$ (this ensures that $C_1,C_3$ contain true public key x,y components.
+    \item $v_1 < \rho \leq v_2$: a statement $a < b$ can be implemented by presenting a bit-decomposition of $m = b - a$ and proving that $m$ has non-zero weight.
+\end{itemize}
+\item $\pi_{4,\GG_2}$ proves public key operations (pks are in $\GG_2$).
+\begin{itemize}
+    \item Input: $\pk^*$, $\pk^*_r$, $\ppk_{s,1},\ppk_{s,2}$, $(\ppk_{r,1}, \ppk_{r,2})$.
+    \item $\pk^* = G^{\sk} \cdot H^r$ ("I am owning $\pk^*$"), and $(\ppk_{s,2})^\sk = \ppk_{s,1}$ ("$\ppk_{s}$ is a valid ppk w.r.t. $\pk$).
+    \item $\ppk_r = \Diversify(\pk_r,d)$, that is $(\ppk_{r,1},\ppk_{r,2}) = (\pk_r^d, G^d)$ (first component equality shown as $(\pk_r^*)^d H^{-rd}$)
+    \item $\phi^{(\sk+\theta)} = H$, where $\theta = \Hash(\phi_{\mathsf{prev}}, \sid, \pid, \nu)$, $\theta$ validity is checked outside.
+\end{itemize}
+\end{enumerate}
