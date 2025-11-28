@@ -133,6 +133,7 @@ pub fn select_next_hop(
 mod tests {
     use super::*;
     use crate::crypto::curve_ops::keygen;
+    use crate::WEIGHT_SUM;
     use rand::thread_rng;
 
     #[test]

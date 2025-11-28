@@ -2,10 +2,10 @@
 //!
 //! Operations on G1 and G2 groups
 
-use crate::types::{Diversifier, DiversifiedPublicKey, PublicKey, ScalarField, SecretKey};
-use ark_ec::{CurveGroup, Group};
-use ark_ff::Field;
+use crate::types::{DiversifiedPublicKey, Diversifier, PublicKey, ScalarField, SecretKey};
 use ark_bls12_381::G2Projective;
+use ark_ec::{CurveGroup, PrimeGroup};
+use ark_ff::Field;
 use ark_std::UniformRand;
 use rand::Rng;
 
@@ -35,10 +35,7 @@ pub fn diversify_with_diversifier(
     let ppk_1 = (pk_proj * diversifier.d).into_affine();
     let ppk_2 = (generator * diversifier.d).into_affine();
 
-    (
-        DiversifiedPublicKey { ppk_1, ppk_2 },
-        diversifier.clone(),
-    )
+    (DiversifiedPublicKey { ppk_1, ppk_2 }, diversifier.clone())
 }
 
 /// Check if diversified public key is valid for a given secret key
