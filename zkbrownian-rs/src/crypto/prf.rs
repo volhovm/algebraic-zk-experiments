@@ -60,7 +60,6 @@ pub fn extract_routing_value(phi: &PrfOutput) -> u32 {
 mod tests {
     use super::*;
     use crate::crypto::curve_ops::keygen;
-    use crate::crypto::poseidon::PoseidonHash;
     use rand::thread_rng;
 
     #[test]

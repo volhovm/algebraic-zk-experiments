@@ -2,10 +2,9 @@
 //!
 //! Command-line interface for running the protocol
 
-use zkbrownian::crypto::curve_ops::keygen;
-use zkbrownian::protocol::{spawn, forward, WeightMatrix};
-use zkbrownian::WEIGHT_SUM;
 use rand::thread_rng;
+use zkbrownian::crypto::curve_ops::keygen;
+use zkbrownian::protocol::spawn;
 
 fn main() {
     println!("ZK Brownian Forward Protocol");

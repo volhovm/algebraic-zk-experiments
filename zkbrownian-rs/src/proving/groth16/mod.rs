@@ -2,13 +2,7 @@
 //!
 //! [`Groth16`]: https://eprint.iacr.org/2016/260.pdf
 #![cfg_attr(not(feature = "std"), no_std)]
-#![warn(
-    unused,
-    future_incompatible,
-    nonstandard_style,
-    rust_2018_idioms,
-    missing_docs
-)]
+#![warn(unused, nonstandard_style, rust_2018_idioms, missing_docs)]
 #![allow(clippy::many_single_char_names, clippy::op_ref)]
 #![forbid(unsafe_code)]
 

@@ -125,7 +125,7 @@ mod tests {
 
     #[test]
     fn test_circuit_creation() {
-        let circuit = ForwardCircuit::new();
+        let _circuit = ForwardCircuit::new();
         // Just test construction
     }
 }

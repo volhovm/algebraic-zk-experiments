@@ -21,13 +21,13 @@ impl Default for PoseidonConfig {
 
 /// Poseidon hasher
 pub struct PoseidonHash {
-    config: PoseidonConfig,
+    _config: PoseidonConfig,
 }
 
 impl PoseidonHash {
     pub fn new() -> Self {
         Self {
-            config: PoseidonConfig::default(),
+            _config: PoseidonConfig::default(),
         }
     }
 

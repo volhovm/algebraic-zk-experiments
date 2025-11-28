@@ -165,8 +165,8 @@ mod tests {
 
         // Setup: create keys for multiple nodes
         let (sk1, pk1) = keygen(&mut rng);
-        let (sk2, pk2) = keygen(&mut rng);
-        let (sk3, pk3) = keygen(&mut rng);
+        let (_sk2, pk2) = keygen(&mut rng);
+        let (_sk3, pk3) = keygen(&mut rng);
 
         let all_pks = vec![pk1.clone(), pk2.clone(), pk3.clone()];
 
