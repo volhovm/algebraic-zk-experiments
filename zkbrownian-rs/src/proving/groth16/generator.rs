@@ -24,7 +24,10 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
     {
         let alpha = E::ScalarField::rand(rng);
         let beta = E::ScalarField::rand(rng);
-        let gamma = E::ScalarField::rand(rng);
+        //let gamma = E::ScalarField::rand(rng);
+        // TODO FIXME: zk-creds claim gamma=1 is secure on p10: https://eprint.iacr.org/2022/878.pdf
+        // without gamma=1 it doesn't work, so we can use either BGM variant or this.
+        let gamma = E::ScalarField::from(1u32);
         let delta = E::ScalarField::rand(rng);
 
         let g1_generator = E::G1::rand(rng);
@@ -189,8 +192,11 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
             alpha_g1: alpha_g1.into_affine(),
             beta_g2: beta_g2.into_affine(),
             gamma_g2: gamma_g2.into_affine(),
+            delta_g1: delta_g1.into_affine(),
             delta_g2: delta_g2.into_affine(),
             gamma_abc_g1,
+            g1_generator: g1_generator.into_affine(),
+            g2_generator: g2_generator.into_affine(),
         };
 
         end_timer!(setup_time);
@@ -198,7 +204,6 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         Ok(ProvingKey {
             vk,
             beta_g1: beta_g1.into_affine(),
-            delta_g1: delta_g1.into_affine(),
             a_query,
             b_g1_query,
             b_g2_query,
