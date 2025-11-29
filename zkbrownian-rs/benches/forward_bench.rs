@@ -1,10 +1,10 @@
 //! Benchmarks for Forward protocol operations
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use rand::thread_rng;
 use zkbrownian::crypto::curve_ops::keygen;
 use zkbrownian::protocol::{forward, spawn, WeightMatrix};
-use zkbrownian::{WEIGHT_SUM};
-use rand::thread_rng;
+use zkbrownian::WEIGHT_SUM;
 
 fn bench_keygen(c: &mut Criterion) {
     let mut rng = thread_rng();
@@ -38,7 +38,7 @@ fn bench_forward(c: &mut Criterion) {
 
     // Setup
     let (sk1, pk1) = keygen(&mut rng);
-    let (sk2, pk2) = keygen(&mut rng);
+    let (_sk2, pk2) = keygen(&mut rng);
     let all_pks = vec![pk1.clone(), pk2.clone()];
     let weight_matrix = WeightMatrix::uniform(2, WEIGHT_SUM);
     let message = spawn(&sk1, &pk1, 1, 100, &mut rng).unwrap();

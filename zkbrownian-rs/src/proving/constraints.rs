@@ -73,8 +73,8 @@ mod tests {
     #[test]
     fn test_constraint_system() {
         let mut cs = ConstraintSystem::new();
-        let var_a = cs.alloc_variable();
-        let var_b = cs.alloc_variable();
+        let _var_a = cs.alloc_variable();
+        let _var_b = cs.alloc_variable();
 
         assert_eq!(cs.num_variables, 2);
         assert_eq!(cs.num_constraints, 0);

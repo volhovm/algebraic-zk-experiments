@@ -2,13 +2,13 @@
 //!
 //! Implements φ_{ν+1} = G^{1/(θ+sk)}
 
-use crate::types::{PrfOutput, ScalarField, SecretKey, G1Point};
 use crate::crypto::curve_ops::compute_prf_exponent;
-use ark_ec::{AffineRepr, CurveGroup};
+use crate::types::{G1Point, PrfOutput, ScalarField, SecretKey};
 use ark_bls12_381::G1Projective;
+use ark_ec::{AffineRepr, CurveGroup};
 
 #[cfg(test)]
-use ark_ec::Group;
+use ark_ec::PrimeGroup;
 
 /// Compute PRF output: φ = G^{1/(θ+sk)}
 ///
@@ -19,11 +19,7 @@ use ark_ec::Group;
 ///
 /// # Returns
 /// PRF output φ or None if θ + sk = 0 (extremely unlikely)
-pub fn compute_prf(
-    theta: &ScalarField,
-    sk: &SecretKey,
-    generator: &G1Point,
-) -> Option<PrfOutput> {
+pub fn compute_prf(theta: &ScalarField, sk: &SecretKey, generator: &G1Point) -> Option<PrfOutput> {
     // Compute exponent: 1/(θ + sk)
     let exponent = compute_prf_exponent(theta, &sk.sk)?;
 
@@ -64,7 +60,6 @@ pub fn extract_routing_value(phi: &PrfOutput) -> u32 {
 mod tests {
     use super::*;
     use crate::crypto::curve_ops::keygen;
-    use crate::crypto::poseidon::PoseidonHash;
     use rand::thread_rng;
 
     #[test]

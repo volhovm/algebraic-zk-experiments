@@ -7,8 +7,8 @@ use crate::protocol::routing::{select_next_hop, WeightMatrix};
 use crate::proving::circuits::ForwardCircuit;
 use crate::types::*;
 use crate::MAX_HOPS;
-use ark_ec::{CurveGroup, Group};
 use ark_bls12_381::G1Projective;
+use ark_ec::{CurveGroup, PrimeGroup};
 use ark_std::UniformRand;
 use rand::Rng;
 
@@ -59,9 +59,9 @@ pub fn forward<R: Rng>(
     } else {
         // Convert G1 point to scalar for hashing (simplified)
         // TODO: Better conversion from G1 point to field element
-        let _phi_point = message.latest_phi().ok_or_else(|| {
-            ProtocolError::CryptoError("No previous PRF output".to_string())
-        })?;
+        let _phi_point = message
+            .latest_phi()
+            .ok_or_else(|| ProtocolError::CryptoError("No previous PRF output".to_string()))?;
         ScalarField::from(1u64) // Placeholder
     };
 
@@ -156,6 +156,7 @@ mod tests {
     use super::*;
     use crate::crypto::curve_ops::keygen;
     use crate::protocol::spawn::spawn;
+    use crate::WEIGHT_SUM;
     use rand::thread_rng;
 
     #[test]
@@ -164,8 +165,8 @@ mod tests {
 
         // Setup: create keys for multiple nodes
         let (sk1, pk1) = keygen(&mut rng);
-        let (sk2, pk2) = keygen(&mut rng);
-        let (sk3, pk3) = keygen(&mut rng);
+        let (_sk2, pk2) = keygen(&mut rng);
+        let (_sk3, pk3) = keygen(&mut rng);
 
         let all_pks = vec![pk1.clone(), pk2.clone(), pk3.clone()];
 

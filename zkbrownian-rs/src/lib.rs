@@ -4,13 +4,16 @@
 //! through a network and prove correct forwarding behavior without revealing
 //! routing information.
 
-pub mod types;
-pub mod crypto;
-pub mod proving;
-pub mod protocol;
+#[macro_use]
+extern crate ark_std;
 
-pub use types::*;
+pub mod crypto;
+pub mod protocol;
+pub mod proving;
+pub mod types;
+
 pub use protocol::{forward, spawn, verify};
+pub use types::*;
 
 /// Maximum number of hops a message can take
 pub const MAX_HOPS: usize = 10;

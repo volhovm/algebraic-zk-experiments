@@ -4,8 +4,8 @@
 //! as required by the protocol specification
 
 use crate::types::{G1Point, G2Point};
-use ark_ec::{CurveGroup, Group};
 use ark_bls12_381::{G1Projective, G2Projective};
+use ark_ec::{CurveGroup, PrimeGroup};
 use ark_std::UniformRand;
 use rand::Rng;
 

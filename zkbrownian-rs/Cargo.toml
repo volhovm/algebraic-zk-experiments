@@ -5,15 +5,7 @@ edition = "2021"
 
 [dependencies]
 # Cryptographic dependencies
-ark-std = { version = "0.4", features = ["std"] }
-ark-ff = "0.4"
-ark-ec = "0.4"
-ark-serialize = { version = "0.4", features = ["derive"] }
-ark-bls12-381 = "0.4"
-ark-groth16 = "0.4"
-ark-r1cs-std = "0.4"
-ark-relations = "0.4"
-ark-crypto-primitives = "0.4"
+rayon = { version = "1", optional = true }
 
 # Utilities
 rand = "0.8"
@@ -22,8 +14,30 @@ thiserror = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
+ark-ff = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false }
+ark-ec = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false }
+ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false, features = [ "derive" ] }
+ark-poly = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false }
+ark-std = { version = "0.5.0", default-features = false }
+
+ark-relations = { git = "https://github.com/arkworks-rs/snark.git", default-features = false }
+ark-snark = { git = "https://github.com/arkworks-rs/snark.git", default-features = false }
+
+ark-r1cs-std = { git = "https://github.com/arkworks-rs/r1cs-std.git", default-features = false, optional = true }
+ark-crypto-primitives = { git = "https://github.com/arkworks-rs/crypto-primitives.git", default-features = false, features = [ "snark", "sponge" ] }
+tracing = { version = "0.1", default-features = false, features = ["attributes" ], optional = true }
+educe = { version = "0.6.0", default-features = false, features = [ "Clone" ], optional = true }
+
+ark-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false, features = [ "curve" ] }
+ark-bls12-377 = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false, features = [ "curve" ] }
+ark-bn254 = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false, features = [ "curve" ] }
+ark-bw6-761 = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false }
+ark-mnt4-298 = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false, features = [ "curve", "r1cs" ] }
+
+
 [dev-dependencies]
 criterion = "0.5"
+
 
 [[bench]]
 name = "forward_bench"
@@ -31,3 +45,44 @@ harness = false
 
 [[example]]
 name = "basic_forward"
+
+
+[features]
+default = ["parallel", "r1cs"]
+std = [
+    "ark-ff/std",
+    "ark-ec/std",
+    "ark-poly/std",
+    "ark-relations/std",
+    "ark-crypto-primitives/std",
+    "ark-std/std",
+]
+parallel = [
+    "std",
+    "ark-ff/parallel",
+    "ark-poly/parallel",
+    "ark-ec/parallel",
+    "ark-crypto-primitives/parallel",
+    "ark-std/parallel",
+    "rayon",
+]
+r1cs = [
+    "ark-crypto-primitives/constraints",
+    "ark-r1cs-std",
+    "tracing",
+    "educe",
+]
+print-trace = ["ark-std/print-trace"]
+
+[patch.crates-io]
+ark-relations = { git = "https://github.com/arkworks-rs/snark.git" }
+ark-ff = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-ec = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-poly = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-bls12-377 = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-bn254 = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-bw6-761 = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-mnt4-298 = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-r1cs-std = { git = "https://github.com/arkworks-rs/r1cs-std.git" }
