@@ -25,10 +25,15 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
     pub fn prepare_inputs(
         pvk: &PreparedVerifyingKey<E>,
         public_inputs: &[E::ScalarField],
+        public_inputs_com: &[E::G1],
     ) -> R1CSResult<E::G1> {
         let mut g_ic = pvk.vk.gamma_abc_g1[0].into_group();
         for (i, b) in public_inputs.iter().zip(pvk.vk.gamma_abc_g1.iter().skip(1)) {
             g_ic.add_assign(&b.mul_bigint(i.into_bigint()));
+        }
+
+        for e in public_inputs_com.iter() {
+            g_ic.add_assign(e);
         }
 
         Ok(g_ic)
@@ -67,8 +72,9 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         pvk: &PreparedVerifyingKey<E>,
         proof: &Proof<E>,
         public_inputs: &[E::ScalarField],
+        public_inputs_com: &[E::G1],
     ) -> R1CSResult<bool> {
-        let prepared_inputs = Self::prepare_inputs(pvk, public_inputs)?;
+        let prepared_inputs = Self::prepare_inputs(pvk, public_inputs, public_inputs_com)?;
         Self::verify_proof_with_prepared_inputs(pvk, proof, &prepared_inputs)
     }
 }

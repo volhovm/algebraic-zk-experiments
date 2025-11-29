@@ -81,7 +81,7 @@ impl<E: Pairing, QAP: R1CSToQAP> SNARK<E::ScalarField> for Groth16<E, QAP> {
         x: &[E::ScalarField],
         proof: &Self::Proof,
     ) -> Result<bool, Self::Error> {
-        Ok(Self::verify_proof(&circuit_pvk, proof, &x)?)
+        Ok(Self::verify_proof(&circuit_pvk, proof, &x, &[])?)
     }
 }
 

@@ -117,6 +117,34 @@ where
     }
 }
 
+fn test_link16<E>()
+where
+    E: Pairing,
+{
+    let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
+
+    let (pk, vk) = Groth16::<E>::setup(MySillyCircuit { a: None, b: None }, &mut rng).unwrap();
+    let pvk = prepare_verifying_key::<E>(&vk);
+
+    let a = E::ScalarField::rand(&mut rng);
+    let b = E::ScalarField::rand(&mut rng);
+    let mut c = a;
+    c *= b;
+
+    let proof = Groth16::<E>::prove(
+        &pk,
+        MySillyCircuit {
+            a: Some(a),
+            b: Some(b),
+        },
+        &mut rng,
+    )
+    .unwrap();
+
+    assert!(Groth16::<E>::verify_with_processed_vk(&pvk, &[c], &proof).unwrap());
+    assert!(!Groth16::<E>::verify_with_processed_vk(&pvk, &[a], &proof).unwrap());
+}
+
 mod bls12_377 {
     use super::{test_prove_and_verify, test_rerandomize};
     use ark_bls12_377::Bls12_377;
@@ -149,11 +177,16 @@ mod bw6_761 {
 }
 
 mod bn_254 {
-    use super::test_prove_and_verify;
+    use super::{test_link16, test_prove_and_verify};
     use ark_bn254::Bn254;
 
     #[test]
     fn prove_and_verify() {
         test_prove_and_verify::<Bn254>(100);
+    }
+
+    #[test]
+    fn link16() {
+        test_link16::<Bn254>();
     }
 }
