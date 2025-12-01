@@ -1,8 +1,8 @@
-nx = 3            # number of instance elements
+nx = 1            # number of instance elements
 ntheta = 1        # number of theta elems
 n = nx + ntheta   # number of equations
-m = 7             # number of witness elements
-nh = 6            # number of random bases
+m = 2             # number of witness elements
+nh = 1            # number of random bases
 
 hs = [var('H%d' % i) for i in range(nh)]
 rr_vars = [var('rr_%d' % i) for i in range(m)]
@@ -16,29 +16,19 @@ def Mtheta(inst):
     mat = [[0 for j in range(m)] for i in range(n)]
     vec = [0 for i in range(n - nx)]
 
-    # x0 = G^w0 * H0^w3
+    # x0 = G^w0 * H^w1
     mat[0][0] = 1
-    mat[0][3] = hs[0]
+    mat[0][1] = hs[0]
 
-    # x1 = G^w1 * H1^w4
-    mat[1][1] = 1
-    mat[1][4] = hs[1]
+    # theta[0] = G^w0
+    mat[1][0] = 1
 
-    # x2 = G^w2 * H2^w5
-    mat[2][2] = 1
-    mat[2][5] = hs[2]
-
-    # theta[0] = X0^w1 * G^-w2 * H0^w6 = G^(w0*w1 -w2) * H0^(w3*w1 -w6)
-
-    mat[3][1] = inst[0]
-    mat[3][2] = -1
-    mat[3][6] = -hs[0]
-
-    # != 0
-    vec[0] = 0
+    # we force w0 to be 5
+    vec[0] = 5
 
     return (Matrix(mat), vector(vec))
 
+# sage variables for statement and wittness
 xs = [var('x_%d' % i) for i in range(nx)]
 ws = [var('w_%d' % i) for i in range(m)]
 x = vector(xs)
@@ -73,13 +63,8 @@ for i in range(n-nx):
 Txs = [[var('Tx_%d_%d' % (i, j)) for j in range(nx + nh + 1)] for i in range(nx)]
 Tws = [[var('Tw_%d_%d' % (i,j)) for j in range(m + 1)] for i in range(m)]
 
-def subs_mat(mat,subsmap):
-    return Matrix([[e.subs(subsmap) for e in row] for row in mat])
-
-T_reduce_map = {}
-
-Tx = Matrix(subs_mat(Txs,T_reduce_map))
-Tw = Matrix(subs_mat(Tws,T_reduce_map))
+Tx = Matrix(Txs)
+Tw = Matrix(Tws)
 
 print("Tw and Tx")
 print(Tw)
@@ -100,27 +85,27 @@ for i in range(n):
     #print(" ", i, ": ", eq_basic[i].full_simplify())
 print("-------")
 
+print("xstack")
+print(stack(stack(x, hs), [1]))
+print(f"{stack(w, [1]) = }")
+
 x_upd = Tx * stack(stack(x, hs), [1])
 w_upd = Tw * stack(w, [1])
+
+print(f"{x_upd=}")
 
 eq_u = stack(x_upd, theta(x_upd)) - M(x_upd) * w_upd
 
 print("Update equation, by instance vector component 0..n:")
 for (e,i) in zip(eq_u,range(n)):
-    print(" ", i, ": ", e.full_simplify())
+    print(" ", i, ": ", e)
+    #print(" ", i, ": ", e.full_simplify())
 
 
-param_solution = { x_0: rr_0 + H0 * rr_3,
-                  x_1: rr_1 + H1 * rr_4,
-                  x_2: rr_0 * rr_1 + H2 * rr_5,
-                  w_0: rr_0,
+param_solution = { x_0: 5 + H0 * rr_1,
+                  w_0: 5,
                   w_1: rr_1,
-                  w_2: rr_0 * rr_1,
-                  w_3: rr_3,
-                  w_4: rr_4,
-                  w_5: rr_5,
-                  w_6: rr_1 * rr_3
-                 }
+                  }
 param_values = [ ]
 
 
@@ -146,7 +131,8 @@ def get_basis_from_sols(sol):
     # Assuming sols[0] is your solution dictionary
     params = set()  # find all parameters (like r4)
     for value in sol.values():
-        params.update(value.variables())
+        if hasattr(value, "variables"):
+            params.update(value.variables())
 
     return list(params)
 
@@ -174,6 +160,8 @@ def concat(lists):
 
 print("ringvars: ", ringvars)
 R = PolynomialRing(SR, concat(ringvars))
+
+print(f"{R=}")
 #R.inject_variables()
 (to_sym_map,[poly_hs,poly_eq_basic_params]) = reassign_vars(R,ringvars)
 
