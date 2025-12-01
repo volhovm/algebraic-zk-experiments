@@ -383,6 +383,7 @@ where
                 gamma_g2,
                 delta_g2,
                 gamma_abc_g1,
+                ..
             } = vk.borrow().clone();
             let alpha_g1 =
                 P::G1Var::new_variable(ark_relations::ns!(cs, "alpha_g1"), || Ok(alpha_g1), mode)?;

@@ -24,10 +24,25 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
     /// wrt the prepared verification key `pvk` and instance public inputs.
     pub fn prepare_inputs(
         pvk: &PreparedVerifyingKey<E>,
+        com_offset: usize,
+        public_input_com: &E::G1,
         public_inputs: &[E::ScalarField],
     ) -> R1CSResult<E::G1> {
         let mut g_ic = pvk.vk.gamma_abc_g1[0].into_group();
-        for (i, b) in public_inputs.iter().zip(pvk.vk.gamma_abc_g1.iter().skip(1)) {
+
+        if com_offset > 0 {
+            println!("Adding commitment to prepare_inputs");
+            g_ic.add_assign(public_input_com);
+        }
+
+        println!("Len of gamma_abc_g1: {}", pvk.vk.gamma_abc_g1.len());
+        println!("Len of public inputs: {}", public_inputs.len());
+
+        for (i, b) in public_inputs
+            .iter()
+            .zip(pvk.vk.gamma_abc_g1.iter().skip(1 + com_offset))
+        {
+            println!("prepare_inputs adding public inputs");
             g_ic.add_assign(&b.mul_bigint(i.into_bigint()));
         }
 
@@ -66,9 +81,12 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
     pub fn verify_proof(
         pvk: &PreparedVerifyingKey<E>,
         proof: &Proof<E>,
+        com_offset: usize,
+        public_inputs_com: &E::G1,
         public_inputs: &[E::ScalarField],
     ) -> R1CSResult<bool> {
-        let prepared_inputs = Self::prepare_inputs(pvk, public_inputs)?;
+        let prepared_inputs =
+            Self::prepare_inputs(pvk, com_offset, public_inputs_com, public_inputs)?;
         Self::verify_proof_with_prepared_inputs(pvk, proof, &prepared_inputs)
     }
 }

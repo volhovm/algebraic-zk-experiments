@@ -36,11 +36,16 @@ pub struct VerifyingKey<E: Pairing> {
     pub beta_g2: E::G2Affine,
     /// The `gamma * H`, where `H` is the generator of `E::G2`.
     pub gamma_g2: E::G2Affine,
+    /// The element `delta * G` in `E::G1`.
+    pub delta_g1: E::G1Affine,
     /// The `delta * H`, where `H` is the generator of `E::G2`.
     pub delta_g2: E::G2Affine,
     /// The `gamma^{-1} * (beta * a_i + alpha * b_i + c_i) * H`, where `H` is
     /// the generator of `E::G1`.
     pub gamma_abc_g1: Vec<E::G1Affine>,
+
+    pub g1_generator: E::G1Affine,
+    pub g2_generator: E::G2Affine,
 }
 
 impl<E: Pairing> Default for VerifyingKey<E> {
@@ -49,8 +54,11 @@ impl<E: Pairing> Default for VerifyingKey<E> {
             alpha_g1: E::G1Affine::default(),
             beta_g2: E::G2Affine::default(),
             gamma_g2: E::G2Affine::default(),
+            delta_g1: E::G1Affine::default(),
             delta_g2: E::G2Affine::default(),
             gamma_abc_g1: Vec::new(),
+            g1_generator: E::G1Affine::default(),
+            g2_generator: E::G2Affine::default(),
         }
     }
 }
@@ -128,8 +136,6 @@ pub struct ProvingKey<E: Pairing> {
     pub vk: VerifyingKey<E>,
     /// The element `beta * G` in `E::G1`.
     pub beta_g1: E::G1Affine,
-    /// The element `delta * G` in `E::G1`.
-    pub delta_g1: E::G1Affine,
     /// The elements `a_i * G` in `E::G1`.
     pub a_query: Vec<E::G1Affine>,
     /// The elements `b_i * G` in `E::G1`.
