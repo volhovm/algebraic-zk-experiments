@@ -2,8 +2,8 @@
 
 use ark_bls12_381::{Bls12_381, Fr, G1Affine, G2Affine};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde::de::Error as DeError;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// BLS12-381 scalar field element
 pub type ScalarField = Fr;
@@ -35,7 +35,8 @@ impl Serialize for PublicKey {
         S: Serializer,
     {
         let mut bytes = Vec::new();
-        self.pk.serialize_compressed(&mut bytes)
+        self.pk
+            .serialize_compressed(&mut bytes)
             .map_err(|e| serde::ser::Error::custom(format!("Serialization error: {}", e)))?;
         serializer.serialize_bytes(&bytes)
     }
@@ -71,12 +72,14 @@ impl Serialize for DiversifiedPublicKey {
         let mut state = serializer.serialize_struct("DiversifiedPublicKey", 2)?;
 
         let mut bytes1 = Vec::new();
-        self.ppk_1.serialize_compressed(&mut bytes1)
+        self.ppk_1
+            .serialize_compressed(&mut bytes1)
             .map_err(|e| serde::ser::Error::custom(format!("Serialization error: {}", e)))?;
         state.serialize_field("ppk_1", &bytes1)?;
 
         let mut bytes2 = Vec::new();
-        self.ppk_2.serialize_compressed(&mut bytes2)
+        self.ppk_2
+            .serialize_compressed(&mut bytes2)
             .map_err(|e| serde::ser::Error::custom(format!("Serialization error: {}", e)))?;
         state.serialize_field("ppk_2", &bytes2)?;
 
@@ -122,7 +125,8 @@ impl Serialize for PrfOutput {
         S: Serializer,
     {
         let mut bytes = Vec::new();
-        self.phi.serialize_compressed(&mut bytes)
+        self.phi
+            .serialize_compressed(&mut bytes)
             .map_err(|e| serde::ser::Error::custom(format!("Serialization error: {}", e)))?;
         serializer.serialize_bytes(&bytes)
     }
@@ -145,8 +149,8 @@ impl<'de> Deserialize<'de> for PrfOutput {
 pub struct Proof {
     /// Groth16 proof elements
     pub pi_1: Vec<u8>, // G1 proof
-    pub pi_2: Vec<u8>, // G1 proof (weights)
-    pub pi_3: Vec<u8>, // G1 proof
+    pub pi_2: Vec<u8>,    // G1 proof (weights)
+    pub pi_3: Vec<u8>,    // G1 proof
     pub pi_4_g1: Vec<u8>, // Schnorr in G1
     pub pi_4_g2: Vec<u8>, // Schnorr in G2
 }

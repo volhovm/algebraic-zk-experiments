@@ -7,11 +7,13 @@
 //! 4. Forwarding the message through the network
 //! 5. Verifying the message
 
+use rand::thread_rng;
 use zkbrownian::crypto::curve_ops::keygen;
-use zkbrownian::protocol::{forward, spawn, verify, BulletinBoard, InMemoryBulletinBoard, WeightMatrix, BulletinBoardEntry};
+use zkbrownian::protocol::{
+    forward, spawn, verify, BulletinBoard, BulletinBoardEntry, InMemoryBulletinBoard, WeightMatrix,
+};
 use zkbrownian::types::{PublicKey, SecretKey, WeightCommitment};
 use zkbrownian::{MAX_HOPS, WEIGHT_SUM};
-use rand::thread_rng;
 
 fn main() {
     println!("=== ZK Brownian Forward Protocol - Basic Example ===\n");
