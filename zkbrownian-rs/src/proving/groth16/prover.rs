@@ -50,7 +50,7 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
             pk,
             r,
             s,
-            E::ScalarField::zero(),
+            &From::from(0u32),
             &h,
             &[],
             input_assignment,
@@ -66,7 +66,7 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         pk: &ProvingKey<E>,
         r: E::ScalarField,
         s: E::ScalarField,
-        com_r: E::ScalarField,
+        com_r_sum: &E::ScalarField,
         h: &[E::ScalarField],
         com_assignment: &[E::ScalarField],
         input_assignment: &[E::ScalarField],
@@ -90,12 +90,12 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
 
         end_timer!(c_acc_time);
 
-        let input_assignment = input_assignment
+        let com_assignment = com_assignment
             .iter()
             .map(|s| s.into_bigint())
             .collect::<Vec<_>>();
 
-        let com_assignment = com_assignment
+        let input_assignment = input_assignment
             .iter()
             .map(|s| s.into_bigint())
             .collect::<Vec<_>>();
@@ -145,7 +145,7 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         g_c -= &r_s_delta_g1;
         g_c += &l_aux_acc;
         g_c += &h_acc;
-        g_c -= &(pk.vk.g1_generator * com_r);
+        g_c -= &(pk.vk.g1_generator * com_r_sum);
         end_timer!(c_time);
 
         Ok(Proof {
@@ -170,7 +170,7 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         let r = E::ScalarField::rand(rng);
         let s = E::ScalarField::rand(rng);
 
-        Ok(Self::create_proof_with_reduction(circuit, pk, r, s, E::ScalarField::zero(), 0)?.0)
+        Ok(Self::create_proof_with_reduction(circuit, pk, r, s, &[], &[])?.0)
     }
 
     /// Create a Groth16 proof that is *not* zero-knowledge with the provided
@@ -188,8 +188,8 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
             pk,
             E::ScalarField::zero(),
             E::ScalarField::zero(),
-            E::ScalarField::zero(),
-            0,
+            &[],
+            &[],
         )?
         .0)
     }
@@ -202,9 +202,9 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         pk: &ProvingKey<E>,
         r: E::ScalarField,
         s: E::ScalarField,
-        com_r: E::ScalarField,
-        com_size: usize,
-    ) -> R1CSResult<(Proof<E>, E::G1)>
+        com_r: &[E::ScalarField],
+        com_sizes: &[usize],
+    ) -> R1CSResult<(Proof<E>, Vec<E::G1>)>
     where
         E: Pairing,
         C: ConstraintSynthesizer<E::ScalarField>,
@@ -237,35 +237,51 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
 
         let prover = cs.borrow().unwrap();
 
-        let com_assignment = &prover.instance_assignment().unwrap()[1..1 + com_size];
-        let instance_assignment = &prover.instance_assignment().unwrap()[1 + com_size..];
+        let com_size_total: usize = com_sizes.iter().sum();
+
+        let com_r_sum: E::ScalarField = com_r
+            .into_iter()
+            .fold(E::ScalarField::from(0u32), |x, y| x + y);
+
+        let com_assignment = &prover.instance_assignment().unwrap()[1..1 + com_size_total];
+        let instance_assignment = &prover.instance_assignment().unwrap()[1 + com_size_total..];
 
         let proof = Self::create_proof_with_assignment(
             pk,
             r,
             s,
-            com_r,
+            &com_r_sum,
             &h,
             &com_assignment,
             &instance_assignment,
             &prover.witness_assignment().unwrap(),
         )?;
 
-        let commitment = {
-            let mut res = E::G1::zero();
+        let commitments = {
+            let mut commitments = vec![];
+            let mut total_sum = 0;
 
-            for (i, b) in com_assignment.iter().zip(pk.vk.gamma_abc_g1.iter().skip(1)) {
-                res.add_assign(&b.mul_bigint(i.into_bigint()));
+            for (i, com_size_i) in com_sizes.iter().enumerate() {
+                let mut res = E::G1::zero();
+                for (e, base) in com_assignment[total_sum..total_sum + com_size_i]
+                    .iter()
+                    .zip(pk.vk.gamma_abc_g1.iter().skip(1 + total_sum))
+                {
+                    res.add_assign(&base.mul_bigint(e.into_bigint()));
+                }
+
+                res.add_assign(&pk.vk.delta_g1.mul_bigint(com_r[i].into_bigint()));
+                commitments.push(res);
+
+                total_sum += com_size_i;
             }
 
-            res.add_assign(&pk.vk.delta_g1.mul_bigint(com_r.into_bigint()));
-
-            res
+            commitments
         };
 
         end_timer!(prover_time);
 
-        Ok((proof, commitment))
+        Ok((proof, commitments))
     }
 
     /// Given a Groth16 proof, returns a fresh proof of the same statement. For
@@ -305,23 +321,29 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
     pub fn rerandomize_proof_and_input(
         vk: &VerifyingKey<E>,
         proof: &Proof<E>,
-        com_input: &E::G1,
+        com_input: &[E::G1],
         rng: &mut impl Rng,
-    ) -> (Proof<E>, E::G1) {
-        let (mut r1, mut r2, mut com_r) = (
-            E::ScalarField::zero(),
-            E::ScalarField::zero(),
-            E::ScalarField::zero(),
-        );
+    ) -> (Proof<E>, Vec<E::G1>) {
+        let (mut r1, mut r2) = (E::ScalarField::zero(), E::ScalarField::zero());
         while r1.is_zero() || r2.is_zero() {
             r1 = E::ScalarField::rand(rng);
             r2 = E::ScalarField::rand(rng);
-            com_r = E::ScalarField::rand(rng);
         }
+
+        let com_rs = {
+            let mut res = vec![];
+            for _i in 0..com_input.len() {
+                res.push(E::ScalarField::rand(rng));
+            }
+            res
+        };
+
+        let com_r_sum: E::ScalarField =
+            com_rs.iter().fold(E::ScalarField::from(0u32), |x, y| x + y);
 
         let new_a = proof.a.mul(r1.inverse().unwrap());
         let new_b = proof.b.mul(r1) + &vk.delta_g2.mul(r1 * &r2);
-        let new_c = proof.c + proof.a.mul(r2).into_affine() - &(vk.g1_generator * com_r);
+        let new_c = proof.c + proof.a.mul(r2).into_affine() - &(vk.g1_generator * com_r_sum);
 
         let proof = Proof {
             a: new_a.into_affine(),
@@ -329,10 +351,16 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
             c: new_c.into_affine(),
         };
 
-        let mut commitment = com_input.clone();
-        commitment.add_assign(&vk.delta_g1.mul_bigint(com_r.into_bigint()));
+        let commitments = {
+            let mut commitments: Vec<_> = com_input.to_vec();
 
-        (proof, commitment)
+            for (i, com_r) in com_rs.iter().enumerate() {
+                commitments[i].add_assign(&vk.delta_g1.mul_bigint(com_r.into_bigint()))
+            }
+            commitments
+        };
+
+        (proof, commitments)
     }
 
     fn calculate_coeff<G: AffineRepr>(
