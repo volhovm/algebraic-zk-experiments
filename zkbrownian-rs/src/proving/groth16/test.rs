@@ -210,8 +210,8 @@ where
         &pk,
         r,
         s,
-        com_r,
-        com_size,
+        &[com_r],
+        &[com_size],
     )
     .unwrap();
 
@@ -224,6 +224,175 @@ where
 
     assert!(
         Groth16::<E>::verify_proof(&pvk, &proof2, com_size, &com2, &[c2]).unwrap(),
+        "Rerandomized proof must verify"
+    );
+}
+
+struct MySillyCircuit3<F: Field> {
+    a1: Option<F>,
+    b1: Option<F>,
+    a2: Option<F>,
+    b2: Option<F>,
+    a3: Option<F>,
+    b3: Option<F>,
+    a4: Option<F>,
+    b4: Option<F>,
+}
+
+impl<ConstraintF: Field> ConstraintSynthesizer<ConstraintF> for MySillyCircuit3<ConstraintF> {
+    fn generate_constraints(
+        self,
+        cs: ConstraintSystemRef<ConstraintF>,
+    ) -> Result<(), SynthesisError> {
+        let a1 = cs.new_witness_variable(|| self.a1.ok_or(SynthesisError::AssignmentMissing))?;
+        let b1 = cs.new_witness_variable(|| self.b1.ok_or(SynthesisError::AssignmentMissing))?;
+        let a2 = cs.new_witness_variable(|| self.a2.ok_or(SynthesisError::AssignmentMissing))?;
+        let b2 = cs.new_witness_variable(|| self.b2.ok_or(SynthesisError::AssignmentMissing))?;
+        let a3 = cs.new_witness_variable(|| self.a3.ok_or(SynthesisError::AssignmentMissing))?;
+        let b3 = cs.new_witness_variable(|| self.b3.ok_or(SynthesisError::AssignmentMissing))?;
+        let a4 = cs.new_witness_variable(|| self.a4.ok_or(SynthesisError::AssignmentMissing))?;
+        let b4 = cs.new_witness_variable(|| self.b4.ok_or(SynthesisError::AssignmentMissing))?;
+
+        let c1 = cs.new_input_variable(|| {
+            let mut a1 = self.a1.ok_or(SynthesisError::AssignmentMissing)?;
+            let b1 = self.b1.ok_or(SynthesisError::AssignmentMissing)?;
+
+            a1 *= &b1;
+            Ok(a1)
+        })?;
+
+        let c2 = cs.new_input_variable(|| {
+            let mut a2 = self.a2.ok_or(SynthesisError::AssignmentMissing)?;
+            let b2 = self.b2.ok_or(SynthesisError::AssignmentMissing)?;
+
+            a2 *= &b2;
+            Ok(a2)
+        })?;
+
+        let c3 = cs.new_input_variable(|| {
+            let mut a3 = self.a3.ok_or(SynthesisError::AssignmentMissing)?;
+            let b3 = self.b3.ok_or(SynthesisError::AssignmentMissing)?;
+
+            a3 *= &b3;
+            Ok(a3)
+        })?;
+
+        let c4 = cs.new_input_variable(|| {
+            let mut a4 = self.a4.ok_or(SynthesisError::AssignmentMissing)?;
+            let b4 = self.b4.ok_or(SynthesisError::AssignmentMissing)?;
+
+            a4 *= &b4;
+            Ok(a4)
+        })?;
+
+        cs.enforce_r1cs_constraint(|| lc!() + a1, || lc!() + b1, || lc!() + c1)?;
+        cs.enforce_r1cs_constraint(|| lc!() + a1, || lc!() + b1, || lc!() + c1)?;
+        cs.enforce_r1cs_constraint(|| lc!() + a1, || lc!() + b1, || lc!() + c1)?;
+        cs.enforce_r1cs_constraint(|| lc!() + a1, || lc!() + b1, || lc!() + c1)?;
+        cs.enforce_r1cs_constraint(|| lc!() + a1, || lc!() + b1, || lc!() + c1)?;
+        cs.enforce_r1cs_constraint(|| lc!() + a1, || lc!() + b1, || lc!() + c1)?;
+
+        cs.enforce_r1cs_constraint(|| lc!() + a2, || lc!() + b2, || lc!() + c2)?;
+        cs.enforce_r1cs_constraint(|| lc!() + a2, || lc!() + b2, || lc!() + c2)?;
+        cs.enforce_r1cs_constraint(|| lc!() + a2, || lc!() + b2, || lc!() + c2)?;
+        cs.enforce_r1cs_constraint(|| lc!() + a2, || lc!() + b2, || lc!() + c2)?;
+        cs.enforce_r1cs_constraint(|| lc!() + a2, || lc!() + b2, || lc!() + c2)?;
+        cs.enforce_r1cs_constraint(|| lc!() + a2, || lc!() + b2, || lc!() + c2)?;
+
+        cs.enforce_r1cs_constraint(|| lc!() + a3, || lc!() + b3, || lc!() + c3)?;
+        cs.enforce_r1cs_constraint(|| lc!() + a3, || lc!() + b3, || lc!() + c3)?;
+        cs.enforce_r1cs_constraint(|| lc!() + a3, || lc!() + b3, || lc!() + c3)?;
+        cs.enforce_r1cs_constraint(|| lc!() + a3, || lc!() + b3, || lc!() + c3)?;
+        cs.enforce_r1cs_constraint(|| lc!() + a3, || lc!() + b3, || lc!() + c3)?;
+        cs.enforce_r1cs_constraint(|| lc!() + a3, || lc!() + b3, || lc!() + c3)?;
+
+        cs.enforce_r1cs_constraint(|| lc!() + a4, || lc!() + b4, || lc!() + c4)?;
+        cs.enforce_r1cs_constraint(|| lc!() + a4, || lc!() + b4, || lc!() + c4)?;
+        cs.enforce_r1cs_constraint(|| lc!() + a4, || lc!() + b4, || lc!() + c4)?;
+        cs.enforce_r1cs_constraint(|| lc!() + a4, || lc!() + b4, || lc!() + c4)?;
+        cs.enforce_r1cs_constraint(|| lc!() + a4, || lc!() + b4, || lc!() + c4)?;
+        cs.enforce_r1cs_constraint(|| lc!() + a4, || lc!() + b4, || lc!() + c4)?;
+
+        Ok(())
+    }
+}
+
+fn test_link16_extra<E>()
+where
+    E: Pairing,
+{
+    let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
+
+    let (pk, vk) = Groth16::<E>::setup(
+        MySillyCircuit3 {
+            a1: None,
+            b1: None,
+            a2: None,
+            b2: None,
+            a3: None,
+            b3: None,
+            a4: None,
+            b4: None,
+        },
+        &mut rng,
+    )
+    .unwrap();
+    let pvk = prepare_verifying_key::<E>(&vk);
+
+    let a1 = E::ScalarField::rand(&mut rng);
+    let b1 = E::ScalarField::rand(&mut rng);
+    let mut c1 = a1;
+    c1 *= b1;
+    let a2 = E::ScalarField::rand(&mut rng);
+    let b2 = E::ScalarField::rand(&mut rng);
+    let mut c2 = a2;
+    c2 *= b2;
+    let a3 = E::ScalarField::rand(&mut rng);
+    let b3 = E::ScalarField::rand(&mut rng);
+    let mut c3 = a3;
+    c3 *= b3;
+    let a4 = E::ScalarField::rand(&mut rng);
+    let b4 = E::ScalarField::rand(&mut rng);
+    let mut c4 = a4;
+    c4 *= b4;
+
+    let r = E::ScalarField::rand(&mut rng);
+    let s = E::ScalarField::rand(&mut rng);
+    let com_r1 = E::ScalarField::rand(&mut rng);
+    let com_r2 = E::ScalarField::rand(&mut rng);
+
+    let com_sizes = [1, 2];
+    let coms_offset: usize = com_sizes.iter().sum();
+
+    let (proof, coms) = Groth16::<E>::create_proof_with_reduction(
+        MySillyCircuit3 {
+            a1: Some(a1),
+            b1: Some(b1),
+            a2: Some(a2),
+            b2: Some(b2),
+            a3: Some(a3),
+            b3: Some(b3),
+            a4: Some(a4),
+            b4: Some(b4),
+        },
+        &pk,
+        r,
+        s,
+        &[com_r1, com_r2],
+        &com_sizes,
+    )
+    .unwrap();
+
+    assert!(
+        Groth16::<E>::verify_proof(&pvk, &proof, coms_offset, &coms, &[c4]).unwrap(),
+        "Proof must verify"
+    );
+
+    let (proof2, coms2) =
+        Groth16::<E>::rerandomize_proof_and_input(&pk.vk, &proof, &coms, &mut rng);
+
+    assert!(
+        Groth16::<E>::verify_proof(&pvk, &proof2, coms_offset, &coms2, &[c4]).unwrap(),
         "Rerandomized proof must verify"
     );
 }
@@ -260,7 +429,7 @@ mod bw6_761 {
 }
 
 mod bn_254 {
-    use super::{test_link16, test_prove_and_verify};
+    use super::{test_link16, test_link16_extra, test_prove_and_verify};
     use ark_bn254::Bn254;
 
     #[test]
@@ -271,5 +440,6 @@ mod bn_254 {
     #[test]
     fn link16() {
         test_link16::<Bn254>();
+        test_link16_extra::<Bn254>();
     }
 }
