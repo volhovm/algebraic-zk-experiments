@@ -1,6 +1,6 @@
-//! Basic example demonstrating the Forward protocol
+//! End-to-end test for the Forward protocol
 //!
-//! This example shows:
+//! This test demonstrates:
 //! 1. Generating protocol state with multiple users
 //! 2. Spawning an initial message
 //! 3. Forwarding the message through the network using UserView
@@ -15,8 +15,9 @@ use zkbrownian::protocol::{
 use zkbrownian::types::{PublicKey, PublicParams, WeightCommitment};
 use zkbrownian::MAX_HOPS;
 
-fn main() {
-    println!("=== ZK Brownian Forward Protocol - Basic Example ===\n");
+#[test]
+fn test_basic_forward_protocol() {
+    println!("=== ZK Brownian Forward Protocol - E2E Test ===\n");
 
     let mut rng = thread_rng();
 
@@ -68,25 +69,19 @@ fn main() {
     let packet_id = 42;
     let session_id = 1000;
 
-    let message = match spawn(
+    let message = spawn(
         &spawner_view.secret_key,
         &spawner_view.public_key,
         packet_id,
         session_id,
         &mut rng,
-    ) {
-        Ok(msg) => {
-            println!("  ✓ Message spawned successfully");
-            println!("    Packet ID: {}", msg.pid);
-            println!("    Session ID: {}", msg.sid);
-            println!("    Initial hop count: {}", msg.hop_count());
-            msg
-        }
-        Err(e) => {
-            println!("  ✗ Failed to spawn message: {:?}", e);
-            return;
-        }
-    };
+    )
+    .expect("Failed to spawn message");
+
+    println!("  ✓ Message spawned successfully");
+    println!("    Packet ID: {}", message.pid);
+    println!("    Session ID: {}", message.sid);
+    println!("    Initial hop count: {}", message.hop_count());
 
     // Step 4: Forward the message through the network
     println!("\nStep 4: Forwarding message through network...");
@@ -100,29 +95,25 @@ fn main() {
 
         let current_user_view = &generated_state.users_view[current_node_index];
 
-        match forward(&pp, current_user_view, &current_message, &mut rng) {
-            Ok((new_message, next_node_index, _diversifier)) => {
-                println!("    ✓ Message forwarded to node {}", next_node_index);
-                println!("    New hop count: {}", new_message.hop_count());
+        let (new_message, next_node_index, _diversifier) =
+            forward(&pp, current_user_view, &current_message, &mut rng)
+                .expect("Failed to forward message");
 
-                // Post to bulletin board
-                let entry = BulletinBoardEntry {
-                    message: new_message.clone(),
-                    receiver_index: next_node_index,
-                    addressed_to: new_message.hops.last().unwrap().ppk.clone(),
-                };
+        println!("    ✓ Message forwarded to node {}", next_node_index);
+        println!("    New hop count: {}", new_message.hop_count());
 
-                bulletin_board.post(entry).unwrap();
-                println!("    ✓ Posted to bulletin board");
+        // Post to bulletin board
+        let entry = BulletinBoardEntry {
+            message: new_message.clone(),
+            receiver_index: next_node_index,
+            addressed_to: new_message.hops.last().unwrap().ppk.clone(),
+        };
 
-                current_message = new_message;
-                current_node_index = next_node_index;
-            }
-            Err(e) => {
-                println!("    ✗ Forward failed: {:?}", e);
-                break;
-            }
-        }
+        bulletin_board.post(entry).unwrap();
+        println!("    ✓ Posted to bulletin board");
+
+        current_message = new_message;
+        current_node_index = next_node_index;
     }
 
     // Step 5: Verify the final message
@@ -132,22 +123,16 @@ fn main() {
         metadata: vec![],
     };
 
-    match verify(
+    let verification_result = verify(
         &current_message,
         current_message.hop_count(),
         &weight_commitment,
         &all_public_keys,
-    ) {
-        Ok(true) => {
-            println!("  ✓ Message verified successfully!");
-        }
-        Ok(false) => {
-            println!("  ✗ Message verification failed");
-        }
-        Err(e) => {
-            println!("  ✗ Verification error: {:?}", e);
-        }
-    }
+    )
+    .expect("Verification error");
+
+    assert!(verification_result, "Message verification failed");
+    println!("  ✓ Message verified successfully!");
 
     // Step 6: Check bulletin board
     println!("\n\nStep 6: Bulletin board summary:");
@@ -163,5 +148,5 @@ fn main() {
         );
     }
 
-    println!("\n=== Example Complete ===");
+    println!("\n=== Test Complete ===");
 }

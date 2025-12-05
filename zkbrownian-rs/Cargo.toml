@@ -44,10 +44,6 @@ criterion = "0.5"
 name = "forward_bench"
 harness = false
 
-[[example]]
-name = "basic_forward"
-
-
 [features]
 default = ["parallel", "r1cs"]
 std = [
