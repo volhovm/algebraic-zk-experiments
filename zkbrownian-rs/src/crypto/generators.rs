@@ -24,6 +24,7 @@ pub fn generate_g2_generators<R: Rng>(rng: &mut R, count: usize) -> Vec<G2Point>
 }
 
 /// Standard generators
+#[derive(Clone, Debug)]
 pub struct Generators {
     /// Base generator for G1 (standard curve generator)
     pub g1_base: G1Point,

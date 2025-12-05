@@ -44,6 +44,10 @@ pub struct UserView {
     pub public_key: PublicKey,
     /// User's view of their neighbors
     pub neighbours_view: NeighboursView,
+    /// User's own sub-merkle root (md_{2,k_s})
+    pub own_sub_merkle_root: ScalarField,
+    /// User's merkle proof of inclusion in the main tree
+    pub own_merkle_proof: Vec<ScalarField>,
 }
 
 /// Generated state bundle containing all protocol initialization data
@@ -150,11 +154,21 @@ pub fn generate_state<R: Rng>(num_users: usize, rng: &mut R) -> GeneratedState {
             neighbors.push(neighbor_info);
         }
 
+        // Get user's own sub-merkle root
+        let own_sub_merkle_root = sub_merkle_trees[user_idx].root;
+
+        // Get user's own merkle proof of inclusion in the main tree
+        let own_merkle_proof = merkle_tree
+            .get_proof(user_idx)
+            .expect("Should have proof for own user");
+
         // Create user view
         let user_view = UserView {
             secret_key: secret_keys[user_idx].clone(),
             public_key: public_keys[user_idx].clone(),
             neighbours_view: NeighboursView { neighbors },
+            own_sub_merkle_root,
+            own_merkle_proof,
         };
 
         users_view.push(user_view);
@@ -176,11 +190,12 @@ pub fn generate_state<R: Rng>(num_users: usize, rng: &mut R) -> GeneratedState {
 /// * `neighbours_view` - User's view of their neighbors
 ///
 /// # Returns
-/// (index, public_key) of selected next hop
+/// (index, public_key, v1, v2) where v1 and v2 are the cumulative weight values
+/// that rho falls between
 fn select_next_hop_from_view(
     rho: u32,
     neighbours_view: &NeighboursView,
-) -> ProtocolResult<(usize, PublicKey)> {
+) -> ProtocolResult<(usize, PublicKey, u64, u64)> {
     if neighbours_view.neighbors.is_empty() {
         return Err(ProtocolError::InvalidWeightSelection);
     }
@@ -188,16 +203,25 @@ fn select_next_hop_from_view(
     // Build cumulative distribution from neighbor weights
     let mut cumulative: u64 = 0;
     for neighbor in &neighbours_view.neighbors {
+        let v1 = cumulative;
         cumulative += neighbor.weight as u64;
+        let v2 = cumulative;
+
         if (rho as u64) < cumulative {
-            return Ok((neighbor.index, neighbor.public_key.clone()));
+            return Ok((neighbor.index, neighbor.public_key.clone(), v1, v2));
         }
     }
 
     // If we get here, ρ didn't fall into any bucket (shouldn't happen if weights sum correctly)
     // Default to last neighbor
     let last_neighbor = neighbours_view.neighbors.last().unwrap();
-    Ok((last_neighbor.index, last_neighbor.public_key.clone()))
+    let total_cumulative = cumulative;
+    Ok((
+        last_neighbor.index,
+        last_neighbor.public_key.clone(),
+        total_cumulative - last_neighbor.weight as u64,
+        total_cumulative,
+    ))
 }
 
 /// Forward function: Forward(user_view, m) -> (m', k_R, d)
@@ -215,6 +239,7 @@ fn select_next_hop_from_view(
 /// 7. Return updated message m'
 ///
 /// # Arguments
+/// * `pp` - Public parameters including generators
 /// * `user_view` - User's complete view (secret key, public key, neighbors)
 /// * `message` - Current message to forward
 /// * `rng` - Random number generator
@@ -224,6 +249,7 @@ fn select_next_hop_from_view(
 /// * `k_R` - Index of receiver node
 /// * `d` - Diversifier used for ppk_{ν+1}
 pub fn forward<R: Rng>(
+    pp: &PublicParams,
     user_view: &UserView,
     message: &Message,
     rng: &mut R,
@@ -260,7 +286,8 @@ pub fn forward<R: Rng>(
     let rho_nu_plus_1 = extract_routing_value(&phi_nu_plus_1);
 
     // Use ρ and user's neighbor view to select next hop
-    let (k_r, pk_nu_plus_1) = select_next_hop_from_view(rho_nu_plus_1, &user_view.neighbours_view)?;
+    let (k_r, pk_nu_plus_1, v1, v2) =
+        select_next_hop_from_view(rho_nu_plus_1, &user_view.neighbours_view)?;
 
     // Step 5: Create diversified public key ppk_{ν+1}
     let d = Diversifier {
@@ -271,6 +298,7 @@ pub fn forward<R: Rng>(
     // Step 6: Generate proof π_{ν+1}
     // TODO: Full proof generation using all five circuits
     let pi_nu_plus_1 = generate_forward_proof(
+        pp,
         &user_view.public_key,
         &user_view.secret_key,
         message,
@@ -280,6 +308,9 @@ pub fn forward<R: Rng>(
         k_r,
         &d,
         &user_view.neighbours_view,
+        user_view.own_sub_merkle_root,
+        v1,
+        v2,
     )?;
 
     // Step 7: Create updated message m'
@@ -302,18 +333,100 @@ pub fn forward<R: Rng>(
 /// - π_{4,G1}: Schnorr bridging
 /// - π_{4,G2}: Public key operations
 fn generate_forward_proof(
-    _pk: &PublicKey,
+    pp: &PublicParams,
+    pk: &PublicKey,
     _sk: &SecretKey,
     _message: &Message,
     _theta: &ScalarField,
     _phi_nu_plus_1: &PrfOutput,
     _ppk_nu_plus_1: &DiversifiedPublicKey,
-    _k_r: usize,
+    k_r: usize,
     _d: &Diversifier,
-    _neighbours_view: &NeighboursView,
+    neighbours_view: &NeighboursView,
+    own_sub_merkle_root: ScalarField,
+    v1: u64,
+    v2: u64,
 ) -> ProtocolResult<Proof> {
     // TODO: Full proof generation
     // For now, return a stub proof
+
+    // Get commitment generators from public parameters
+    let g1_base = pp
+        .generators
+        .g1(0)
+        .ok_or_else(|| ProtocolError::CryptoError("Missing G1 generator 0".to_string()))?;
+    let g2_base = pp
+        .generators
+        .g1(1)
+        .ok_or_else(|| ProtocolError::CryptoError("Missing G1 generator 1".to_string()))?;
+    let g3_base = pp
+        .generators
+        .g1(2)
+        .ok_or_else(|| ProtocolError::CryptoError("Missing G1 generator 2".to_string()))?;
+    let g4_base = pp
+        .generators
+        .g1(3)
+        .ok_or_else(|| ProtocolError::CryptoError("Missing G1 generator 3".to_string()))?;
+
+    // Convert to projective for scalar multiplication
+    let g1_base_proj = G1Projective::from(*g1_base);
+    let g2_base_proj = G1Projective::from(*g2_base);
+    let g3_base_proj = G1Projective::from(*g3_base);
+    let g4_base_proj = G1Projective::from(*g4_base);
+
+    // Generate random blinding factors
+    let r1 = ScalarField::rand(&mut rand::thread_rng());
+    let r2 = ScalarField::rand(&mut rand::thread_rng());
+    let r_v1 = ScalarField::rand(&mut rand::thread_rng());
+    let r_v2 = ScalarField::rand(&mut rand::thread_rng());
+
+    // Extract sender's public key coordinates and convert to BLS12-381 scalar field
+    // Note: Converting Grumpkin field elements to BLS12-381 scalar field via BigInt
+    use ark_ff::{BigInteger, PrimeField};
+    let pk_x_scalar = ScalarField::from_le_bytes_mod_order(&pk.pk.x.into_bigint().to_bytes_le());
+    let pk_y_scalar = ScalarField::from_le_bytes_mod_order(&pk.pk.y.into_bigint().to_bytes_le());
+
+    // Get sender's sub-merkle root (md_{2,k_s}) from user view
+    let md_2_k_s = own_sub_merkle_root;
+
+    // Create commitment C1 = g1^{pk_x} * g2^{pk_y} * g3^{md_{2,k_s}} * g4^{r1}
+    let c1 = (g1_base_proj * pk_x_scalar)
+        + (g2_base_proj * pk_y_scalar)
+        + (g3_base_proj * md_2_k_s)
+        + (g4_base_proj * r1);
+
+    // Find the receiver in the neighbors view to get their public key
+    let receiver = neighbours_view
+        .neighbors
+        .iter()
+        .find(|n| n.index == k_r)
+        .ok_or_else(|| ProtocolError::InvalidWeightSelection)?;
+
+    // Extract receiver's public key coordinates and convert to BLS12-381 scalar field
+    let pk_r_x_scalar =
+        ScalarField::from_le_bytes_mod_order(&receiver.public_key.pk.x.into_bigint().to_bytes_le());
+    let pk_r_y_scalar =
+        ScalarField::from_le_bytes_mod_order(&receiver.public_key.pk.y.into_bigint().to_bytes_le());
+
+    // Get receiver's sub-merkle root (md_{2,k_r})
+    let md_2_k_r = receiver.sub_merkle_root;
+
+    // Create commitment C2 = g1^{pk_{r,x}} * g2^{pk_{r,y}} * g3^{md_{2,k_r}} * g4^{r2}
+    let c2 = (g1_base_proj * pk_r_x_scalar)
+        + (g2_base_proj * pk_r_y_scalar)
+        + (g3_base_proj * md_2_k_r)
+        + (g4_base_proj * r2);
+
+    // Create commitments to v1 and v2
+    // C_{v1} = g1^{v1} * g2^{r_v1}
+    let c_v1 = (g1_base_proj * ScalarField::from(v1)) + (g2_base_proj * r_v1);
+
+    // C_{v2} = g1^{v2} * g2^{r_v2}
+    let c_v2 = (g1_base_proj * ScalarField::from(v2)) + (g2_base_proj * r_v2);
+
+    // For now, we just verify that the commitments were created successfully
+    // In a real implementation, these would be used in the proof generation
+    let _ = (c1, c2, c_v1, c_v2);
 
     // Create circuit
     let _circuit = ForwardCircuit::new();
@@ -337,8 +450,21 @@ fn generate_forward_proof(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crypto::generators::Generators;
     use crate::protocol::spawn::spawn;
     use rand::thread_rng;
+
+    // Helper function to create public parameters for tests
+    fn create_test_public_params<R: Rng>(rng: &mut R) -> PublicParams {
+        PublicParams {
+            num_nodes: 10,
+            max_out_degree: 10,
+            g1_generators: vec![],
+            g2_generators: vec![],
+            groth16_params: vec![],
+            generators: Generators::generate(rng, 10, 10),
+        }
+    }
 
     #[test]
     fn test_forward_basic() {
@@ -347,6 +473,9 @@ mod tests {
         // Setup: generate protocol state with 3 users
         let generated_state = generate_state(3, &mut rng);
         let user_0_view = &generated_state.users_view[0];
+
+        // Create public parameters
+        let pp = create_test_public_params(&mut rng);
 
         // Spawn initial message from user 0
         let message = spawn(
@@ -359,7 +488,7 @@ mod tests {
         .unwrap();
 
         // Forward the message using user 0's view
-        let result = forward(user_0_view, &message, &mut rng);
+        let result = forward(&pp, user_0_view, &message, &mut rng);
 
         match result {
             Ok((new_message, k_r, _d)) => {
@@ -381,6 +510,9 @@ mod tests {
         // Setup: generate protocol state with 1 user
         let generated_state = generate_state(1, &mut rng);
         let user_0_view = &generated_state.users_view[0];
+
+        // Create public parameters
+        let pp = create_test_public_params(&mut rng);
 
         // Create a message with maximum hops
         let mut message = spawn(
@@ -413,7 +545,7 @@ mod tests {
         }
 
         // Should fail with MaxHopsExceeded
-        let result = forward(user_0_view, &message, &mut rng);
+        let result = forward(&pp, user_0_view, &message, &mut rng);
         assert!(matches!(result, Err(ProtocolError::MaxHopsExceeded)));
     }
 

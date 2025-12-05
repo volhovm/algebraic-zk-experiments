@@ -228,6 +228,8 @@ pub struct PublicParams {
     pub g2_generators: Vec<G2>,
     /// Groth16 proving/verifying keys (stub)
     pub groth16_params: Vec<u8>,
+    /// Cryptographic generators for the protocol
+    pub generators: crate::crypto::generators::Generators,
 }
 
 /// Sub-Merkle tree (M2) for a single user's weight distribution

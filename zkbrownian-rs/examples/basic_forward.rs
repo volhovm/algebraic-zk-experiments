@@ -7,11 +7,12 @@
 //! 4. Verifying the message
 
 use rand::thread_rng;
+use zkbrownian::crypto::generators::Generators;
 use zkbrownian::protocol::{
     forward, generate_state, spawn, verify, BulletinBoard, BulletinBoardEntry,
     InMemoryBulletinBoard,
 };
-use zkbrownian::types::{PublicKey, WeightCommitment};
+use zkbrownian::types::{PublicKey, PublicParams, WeightCommitment};
 use zkbrownian::MAX_HOPS;
 
 fn main() {
@@ -23,6 +24,16 @@ fn main() {
     println!("Step 1: Generating protocol state for 5 users...");
     let num_nodes = 5;
     let generated_state = generate_state(num_nodes, &mut rng);
+
+    // Create public parameters
+    let pp = PublicParams {
+        num_nodes,
+        max_out_degree: 10,
+        g1_generators: vec![],
+        g2_generators: vec![],
+        groth16_params: vec![],
+        generators: Generators::generate(&mut rng, 10, 10),
+    };
 
     for i in 0..num_nodes {
         println!(
@@ -89,7 +100,7 @@ fn main() {
 
         let current_user_view = &generated_state.users_view[current_node_index];
 
-        match forward(current_user_view, &current_message, &mut rng) {
+        match forward(&pp, current_user_view, &current_message, &mut rng) {
             Ok((new_message, next_node_index, _diversifier)) => {
                 println!("    ✓ Message forwarded to node {}", next_node_index);
                 println!("    New hop count: {}", new_message.hop_count());
