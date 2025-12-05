@@ -29,6 +29,7 @@ tracing = { version = "0.1", default-features = false, features = ["attributes" 
 educe = { version = "0.6.0", default-features = false, features = [ "Clone" ], optional = true }
 
 ark-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false, features = [ "curve" ] }
+ark-grumpkin = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false }
 ark-bls12-377 = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false, features = [ "curve" ] }
 ark-bn254 = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false, features = [ "curve" ] }
 ark-bw6-761 = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false }
@@ -42,10 +43,6 @@ criterion = "0.5"
 [[bench]]
 name = "forward_bench"
 harness = false
-
-[[example]]
-name = "basic_forward"
-
 
 [features]
 default = ["parallel", "r1cs"]
@@ -81,6 +78,7 @@ ark-ec = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-poly = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-grumpkin = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-bls12-377 = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-bn254 = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-bw6-761 = { git = "https://github.com/arkworks-rs/algebra.git" }

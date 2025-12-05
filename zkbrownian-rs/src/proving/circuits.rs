@@ -1,131 +1,353 @@
-//! Circuit definitions for the Forward protocol
+//! Circuit definitions and proof generation for the Forward protocol
 //!
-//! Defines the five proof circuits mentioned in the spec:
+//! This module defines the instance/witness structures and stub proof generation
+//! functions for the five proof components mentioned in the spec:
 //! - π_1: Merkle tree membership for sender public key
 //! - π_2: Weight sub-tree proofs (Catalano-Fiore variant)
 //! - π_3: Merkle tree membership for receiver public key
 //! - π_{4,G1}: Lightweight Schnorr bridging proof in G1
 //! - π_{4,G2}: Public key operations proof in G2
 
-use crate::types::ProtocolResult;
+use crate::types::{ProtocolResult, ScalarField, G3};
+use ark_bls12_381::G1Projective;
 
-/// Circuit for π_1: Sender public key membership
-pub struct SenderMembershipCircuit {
-    // TODO: Define circuit constraints
+// =============================================================================
+// π_1: Sender Membership Proof
+// =============================================================================
+
+/// Instance (public inputs) for sender membership proof π_1
+#[derive(Clone, Debug)]
+pub struct SenderMembershipInstance {
+    /// Commitment C1 = g1^{pk_x} * g2^{pk_y} * g3^{md_{2,k_s}} * g4^{r1}
+    pub c1: G1Projective,
+    /// Root of the main merkle tree
+    pub merkle_root: ScalarField,
 }
 
-impl SenderMembershipCircuit {
-    pub fn new() -> Self {
-        Self {}
-    }
-
-    pub fn generate_constraints(&self) -> ProtocolResult<()> {
-        // TODO: Generate R1CS constraints
-        Ok(())
-    }
+/// Witness (private inputs) for sender membership proof π_1
+#[derive(Clone, Debug)]
+pub struct SenderMembershipWitness {
+    /// Sender's public key x-coordinate
+    pub pk_x: ScalarField,
+    /// Sender's public key y-coordinate
+    pub pk_y: ScalarField,
+    /// Sender's sub-merkle tree root (md_{2,k_s})
+    pub md_2_k_s: ScalarField,
+    /// Blinding factor for commitment C1
+    pub r1: ScalarField,
+    /// Merkle proof path for sender's inclusion in main tree
+    pub merkle_proof: Vec<ScalarField>,
 }
 
-/// Circuit for π_2: Weight sub-tree proof
-pub struct WeightSubtreeCircuit {
-    // TODO: Define circuit constraints
+/// Generate sender membership proof (π_1)
+///
+/// This proves that the sender's public key is committed in C1 and
+/// is included in the main merkle tree.
+///
+/// # Arguments
+/// * `instance` - Public inputs (C1, merkle_root)
+/// * `witness` - Private inputs (pk_x, pk_y, md_{2,k_s}, r1, merkle_proof)
+///
+/// # Returns
+/// Serialized Groth16 proof bytes
+pub fn prove_sender_membership(
+    _instance: &SenderMembershipInstance,
+    _witness: &SenderMembershipWitness,
+) -> ProtocolResult<Vec<u8>> {
+    // TODO: Actual Groth16 proof generation
+    // For now, return stub proof
+    Ok(vec![0u8; 32])
 }
 
-impl WeightSubtreeCircuit {
-    pub fn new() -> Self {
-        Self {}
-    }
+// =============================================================================
+// π_3: Receiver Membership Proof
+// =============================================================================
 
-    pub fn generate_constraints(&self) -> ProtocolResult<()> {
-        // TODO: Generate R1CS constraints for:
-        // - Merkle tree openings for receiver and pre-receiver
-        // - Range proof: v_1 < ρ ≤ v_2
-        Ok(())
-    }
+/// Instance (public inputs) for receiver membership proof π_3
+#[derive(Clone, Debug)]
+pub struct ReceiverMembershipInstance {
+    /// Commitment C2 = g1^{pk_{r,x}} * g2^{pk_{r,y}} * g3^{md_{2,k_r}} * g4^{r2}
+    pub c2: G1Projective,
+    /// Root of the main merkle tree
+    pub merkle_root: ScalarField,
 }
 
-/// Circuit for π_3: Receiver public key membership
-pub struct ReceiverMembershipCircuit {
-    // TODO: Define circuit constraints
+/// Witness (private inputs) for receiver membership proof π_3
+#[derive(Clone, Debug)]
+pub struct ReceiverMembershipWitness {
+    /// Receiver's public key x-coordinate
+    pub pk_r_x: ScalarField,
+    /// Receiver's public key y-coordinate
+    pub pk_r_y: ScalarField,
+    /// Receiver's sub-merkle tree root (md_{2,k_r})
+    pub md_2_k_r: ScalarField,
+    /// Blinding factor for commitment C2
+    pub r2: ScalarField,
+    /// Merkle proof path for receiver's inclusion in main tree
+    pub merkle_proof: Vec<ScalarField>,
 }
 
-impl ReceiverMembershipCircuit {
-    pub fn new() -> Self {
-        Self {}
-    }
-
-    pub fn generate_constraints(&self) -> ProtocolResult<()> {
-        // TODO: Generate R1CS constraints
-        Ok(())
-    }
+/// Generate receiver membership proof (π_3)
+///
+/// This proves that the receiver's public key is committed in C2 and
+/// is included in the main merkle tree.
+///
+/// # Arguments
+/// * `instance` - Public inputs (C2, merkle_root)
+/// * `witness` - Private inputs (pk_r_x, pk_r_y, md_{2,k_r}, r2, merkle_proof)
+///
+/// # Returns
+/// Serialized Groth16 proof bytes
+pub fn prove_receiver_membership(
+    _instance: &ReceiverMembershipInstance,
+    _witness: &ReceiverMembershipWitness,
+) -> ProtocolResult<Vec<u8>> {
+    // TODO: Actual Groth16 proof generation
+    // For now, return stub proof
+    Ok(vec![0u8; 32])
 }
 
-/// Circuit for π_{4,G1}: Schnorr bridging in G1
-pub struct SchnorrG1Circuit {
-    // TODO: Define circuit constraints for:
-    // - Blinded public key relations
-    // - Commitment openings
-    // - Range proof v_1 < ρ ≤ v_2
+// =============================================================================
+// π_2: Weight Subtree Proof
+// =============================================================================
+
+/// Instance (public inputs) for weight subtree proof π_2
+#[derive(Clone, Debug)]
+pub struct WeightSubtreeInstance {
+    /// Commitment to sender (C1)
+    pub c1: G1Projective,
+    /// Commitment to receiver (C2)
+    pub c2: G1Projective,
+    /// Commitment to v1 (cumulative weight before receiver)
+    pub c_v1: G1Projective,
+    /// Commitment to v2 (cumulative weight including receiver)
+    pub c_v2: G1Projective,
 }
 
-impl SchnorrG1Circuit {
-    pub fn new() -> Self {
-        Self {}
-    }
-
-    pub fn generate_constraints(&self) -> ProtocolResult<()> {
-        // TODO: Generate constraints
-        Ok(())
-    }
+/// Witness (private inputs) for weight subtree proof π_2
+#[derive(Clone, Debug)]
+pub struct WeightSubtreeWitness {
+    /// Sender's public key x-coordinate
+    pub pk_x: ScalarField,
+    /// Sender's public key y-coordinate
+    pub pk_y: ScalarField,
+    /// Sender's sub-merkle tree root (md_{2,k_s})
+    pub md_2_k_s: ScalarField,
+    /// Blinding factor for C1
+    pub r1: ScalarField,
+    /// Receiver's public key x-coordinate
+    pub pk_r_x: ScalarField,
+    /// Receiver's public key y-coordinate
+    pub pk_r_y: ScalarField,
+    /// Receiver's sub-merkle tree root (md_{2,k_r})
+    pub md_2_k_r: ScalarField,
+    /// Blinding factor for C2
+    pub r2: ScalarField,
+    /// Cumulative weight before receiver (v1)
+    pub v1: u64,
+    /// Blinding factor for C_v1
+    pub r_v1: ScalarField,
+    /// Cumulative weight including receiver (v2)
+    pub v2: u64,
+    /// Blinding factor for C_v2
+    pub r_v2: ScalarField,
+    /// Merkle proof path in sender's sub-tree to the leaf corresponding to v1
+    /// This points to the previous neighbor in the cumulative weight distribution
+    pub sub_merkle_proof_v1: Vec<ScalarField>,
+    /// Merkle proof path in sender's sub-tree to the leaf corresponding to v2
+    /// This points to the receiver's leaf in the cumulative weight distribution
+    pub sub_merkle_proof_v2: Vec<ScalarField>,
 }
 
-/// Circuit for π_{4,G2}: Public key operations in G2
-pub struct PublicKeyOpsCircuit {
-    // TODO: Define circuit constraints for:
-    // - Ownership proof: pk* = G^sk · H^r
-    // - Valid diversified pk: (ppk_{s,2})^sk = ppk_{s,1}
-    // - Diversify correctness: ppk_r = (pk_r^d, G^d)
-    // - PRF correctness: φ^{(sk+θ)} = H
+/// Generate weight subtree proof (π_2)
+///
+/// This proves that:
+/// 1. The commitments C1 and C2 are correctly formed
+/// 2. The values v1 and v2 are correctly committed in C_v1 and C_v2
+/// 3. Both v1 and v2 exist in the sender's sub-merkle tree (md_{2,k_s})
+/// 4. v1 < ρ ≤ v2 (range proof for routing value)
+///
+/// # Arguments
+/// * `instance` - Public inputs (C1, C2, C_v1, C_v2)
+/// * `witness` - Private inputs (all exponents and sub-merkle proofs)
+///
+/// # Returns
+/// Serialized Groth16 proof bytes
+pub fn prove_weight_subtree(
+    _instance: &WeightSubtreeInstance,
+    _witness: &WeightSubtreeWitness,
+) -> ProtocolResult<Vec<u8>> {
+    // TODO: Actual Groth16 proof generation
+    // For now, return stub proof
+    Ok(vec![0u8; 32])
 }
 
-impl PublicKeyOpsCircuit {
-    pub fn new() -> Self {
-        Self {}
-    }
+// =============================================================================
+// π_{4,G1}: Schnorr Bridging Proof
+// =============================================================================
 
-    pub fn generate_constraints(&self) -> ProtocolResult<()> {
-        // TODO: Generate constraints
-        Ok(())
-    }
+/// Instance (public inputs) for Schnorr bridging proof π_{4,G1}
+///
+/// This proof bridges the representation of public keys between G3 (Grumpkin)
+/// and G1 (BLS12-381) by expressing G3 coordinates as commitments in G1.
+#[derive(Clone, Debug)]
+pub struct SchnorrBridgingInstance {
+    /// Commitment to pk_star coordinates: G1^{pk_star_x} * G2^{pk_star_y}
+    pub pk_star_coord: G1Projective,
+    /// Commitment to pk_r_star coordinates: G1^{pk_r_star_x} * G2^{pk_r_star_y}
+    pub pk_r_star_coord: G1Projective,
+    /// Commitment to sender (C1)
+    pub c1: G1Projective,
+    /// Commitment to receiver (C2)
+    pub c2: G1Projective,
+    /// Commitment to v1 (cumulative weight before receiver)
+    pub c_v1: G1Projective,
+    /// Commitment to v2 (cumulative weight including receiver)
+    pub c_v2: G1Projective,
+    /// Commitment to routing value G^ρ
+    pub g_rho: G1Projective,
 }
 
-/// Combined circuit for the full Forward proof
-pub struct ForwardCircuit {
-    pub sender_membership: SenderMembershipCircuit,
-    pub weight_subtree: WeightSubtreeCircuit,
-    pub receiver_membership: ReceiverMembershipCircuit,
-    pub schnorr_g1: SchnorrG1Circuit,
-    pub pubkey_ops: PublicKeyOpsCircuit,
+/// Witness (private inputs) for Schnorr bridging proof π_{4,G1}
+#[derive(Clone, Debug)]
+pub struct SchnorrBridgingWitness {
+    // Exponents from C1 commitment
+    /// Sender's public key x-coordinate
+    pub pk_x: ScalarField,
+    /// Sender's public key y-coordinate
+    pub pk_y: ScalarField,
+    /// Sender's sub-merkle tree root
+    pub md_2_k_s: ScalarField,
+    /// Blinding factor for C1
+    pub r1: ScalarField,
+
+    // Exponents from C2 commitment
+    /// Receiver's public key x-coordinate
+    pub pk_r_x: ScalarField,
+    /// Receiver's public key y-coordinate
+    pub pk_r_y: ScalarField,
+    /// Receiver's sub-merkle tree root
+    pub md_2_k_r: ScalarField,
+    /// Blinding factor for C2
+    pub r2: ScalarField,
+
+    // Exponents from C_v1 and C_v2 commitments
+    /// Cumulative weight before receiver
+    pub v1: u64,
+    /// Blinding factor for C_v1
+    pub r_v1: ScalarField,
+    /// Cumulative weight including receiver
+    pub v2: u64,
+    /// Blinding factor for C_v2
+    pub r_v2: ScalarField,
+
+    // Routing value
+    /// Routing value ρ
+    pub rho: ScalarField,
+
+    // Coordinates of pk_star and pk_r_star in G3
+    /// pk_star x-coordinate (converted to BLS12-381 scalar field)
+    pub pk_star_x: ScalarField,
+    /// pk_star y-coordinate (converted to BLS12-381 scalar field)
+    pub pk_star_y: ScalarField,
+    /// pk_r_star x-coordinate (converted to BLS12-381 scalar field)
+    pub pk_r_star_x: ScalarField,
+    /// pk_r_star y-coordinate (converted to BLS12-381 scalar field)
+    pub pk_r_star_y: ScalarField,
+
+    // Blinding factors for pk_star and pk_r_star
+    /// Blinding factor r_star for pk_star = G^{sk} * H^{r_star}
+    pub r_star: ScalarField,
+    /// Blinding factor r_r_star for pk_r_star = pk_r * H^{r_r_star}
+    pub r_r_star: ScalarField,
 }
 
-impl ForwardCircuit {
-    pub fn new() -> Self {
-        Self {
-            sender_membership: SenderMembershipCircuit::new(),
-            weight_subtree: WeightSubtreeCircuit::new(),
-            receiver_membership: ReceiverMembershipCircuit::new(),
-            schnorr_g1: SchnorrG1Circuit::new(),
-            pubkey_ops: PublicKeyOpsCircuit::new(),
-        }
-    }
+/// Generate Schnorr bridging proof π_{4,G1}
+///
+/// This proves that:
+/// 1. pk_star and pk_r_star are correctly formed in coordinate representation
+/// 2. All commitments C1, C2, C_v1, C_v2 are consistent with their exponents
+/// 3. The routing value ρ is correctly committed
+///
+/// # Arguments
+/// * `instance` - Public inputs (coordinate commitments and other commitments)
+/// * `witness` - Private inputs (all exponents and coordinates)
+///
+/// # Returns
+/// Serialized Groth16 proof bytes
+pub fn prove_schnorr_bridging(
+    _instance: &SchnorrBridgingInstance,
+    _witness: &SchnorrBridgingWitness,
+) -> ProtocolResult<Vec<u8>> {
+    // TODO: Actual Groth16 proof generation
+    // For now, return stub proof
+    Ok(vec![0u8; 32])
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+// =============================================================================
+// π_{4,G2}: Public Key Operations Proof
+// =============================================================================
 
-    #[test]
-    fn test_circuit_creation() {
-        let _circuit = ForwardCircuit::new();
-        // Just test construction
-    }
+/// Instance (public inputs) for public key operations proof π_{4,G2}
+///
+/// This proof demonstrates correct application of diversifiers and
+/// hash chain integrity in the forward protocol.
+#[derive(Clone, Debug)]
+pub struct PublicKeyOperationsInstance {
+    /// Blinded sender public key pk_star = G^{sk} * H^{r_star}
+    pub pk_star: G3,
+    /// Blinded receiver public key pk_r_star = pk_r * H^{r_r_star}
+    pub pk_r_star: G3,
+    /// First component of sender's diversified public key (ppk^d)
+    pub ppk_s_1: G3,
+    /// Second component of sender's diversified public key (G^d)
+    pub ppk_s_2: G3,
+    /// First component of receiver's diversified public key (ppk_r^d)
+    pub ppk_r_1: G3,
+    /// Second component of receiver's diversified public key (G^d)
+    pub ppk_r_2: G3,
+    /// Commitment to hash of previous hop: G^θ (in G1)
+    pub g_theta: G1Projective,
+    /// PRF output for current hop: G^φ (in G1)
+    pub g_phi: G1Projective,
+}
+
+/// Witness (private inputs) for public key operations proof π_{4,G2}
+#[derive(Clone, Debug)]
+pub struct PublicKeyOperationsWitness {
+    /// Sender's secret key
+    pub sk: ScalarField,
+    /// Diversifier chosen by sender for this hop
+    pub d: ScalarField,
+    /// Hash value theta from previous hop
+    pub theta: ScalarField,
+    /// PRF output phi for current hop
+    pub phi: ScalarField,
+    /// Blinding factor r_star for pk_star = G^{sk} * H^{r_star}
+    pub r_star: ScalarField,
+    /// Blinding factor r_r_star for pk_r_star = pk_r * H^{r_r_star}
+    pub r_r_star: ScalarField,
+}
+
+/// Generate public key operations proof π_{4,G2}
+///
+/// This proves that:
+/// 1. pk_star and pk_r_star relate correctly to diversified public keys
+/// 2. Diversifier d is correctly applied
+/// 3. Hash chain integrity is maintained (theta, phi)
+/// 4. Sender knows the secret key sk
+///
+/// # Arguments
+/// * `instance` - Public inputs (blinded keys, diversified keys, hash commitments)
+/// * `witness` - Private inputs (sk, d, exponents)
+///
+/// # Returns
+/// Serialized Groth16 proof bytes
+pub fn prove_public_key_operations(
+    _instance: &PublicKeyOperationsInstance,
+    _witness: &PublicKeyOperationsWitness,
+) -> ProtocolResult<Vec<u8>> {
+    // TODO: Actual Groth16 proof generation
+    // For now, return stub proof
+    Ok(vec![0u8; 32])
 }
