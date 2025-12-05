@@ -1,21 +1,13 @@
 //! Core data structures for the ZK Brownian protocol
 
-use ark_bls12_381::{Bls12_381, Fr, G1Affine, G2Affine};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::de::Error as DeError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-/// BLS12-381 scalar field element
-pub type ScalarField = Fr;
-
-/// G1 curve point (used for some commitments)
-pub type G1Point = G1Affine;
-
-/// G2 curve point (used for public keys)
-pub type G2Point = G2Affine;
-
-/// Pairing engine
-pub type PairingEngine = Bls12_381;
+// Re-export curve types for backward compatibility and convenience
+pub use crate::crypto::curve::{
+    PairingEngine, ScalarField, G1, G1 as G1Point, G2, G2 as G2Point, G3, G3 as GrumpkinPoint,
+};
 
 /// Secret key (scalar in the field)
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
@@ -23,10 +15,10 @@ pub struct SecretKey {
     pub sk: ScalarField,
 }
 
-/// Public key (G2 point)
+/// Public key (G3/Grumpkin point)
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct PublicKey {
-    pub pk: G2Point,
+    pub pk: G3,
 }
 
 impl Serialize for PublicKey {
@@ -48,7 +40,7 @@ impl<'de> Deserialize<'de> for PublicKey {
         D: Deserializer<'de>,
     {
         let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
-        let pk = G2Point::deserialize_compressed(&bytes[..])
+        let pk = G3::deserialize_compressed(&bytes[..])
             .map_err(|e| DeError::custom(format!("Deserialization error: {}", e)))?;
         Ok(PublicKey { pk })
     }
@@ -58,9 +50,9 @@ impl<'de> Deserialize<'de> for PublicKey {
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct DiversifiedPublicKey {
     /// pk^d component
-    pub ppk_1: G2Point,
+    pub ppk_1: G3,
     /// G^d component
-    pub ppk_2: G2Point,
+    pub ppk_2: G3,
 }
 
 impl Serialize for DiversifiedPublicKey {
@@ -99,9 +91,9 @@ impl<'de> Deserialize<'de> for DiversifiedPublicKey {
         }
 
         let helper = Helper::deserialize(deserializer)?;
-        let ppk_1 = G2Point::deserialize_compressed(&helper.ppk_1[..])
+        let ppk_1 = G3::deserialize_compressed(&helper.ppk_1[..])
             .map_err(|e| DeError::custom(format!("Deserialization error: {}", e)))?;
-        let ppk_2 = G2Point::deserialize_compressed(&helper.ppk_2[..])
+        let ppk_2 = G3::deserialize_compressed(&helper.ppk_2[..])
             .map_err(|e| DeError::custom(format!("Deserialization error: {}", e)))?;
         Ok(DiversifiedPublicKey { ppk_1, ppk_2 })
     }
@@ -116,7 +108,7 @@ pub struct Diversifier {
 /// PRF output φ (G1 point)
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct PrfOutput {
-    pub phi: G1Point,
+    pub phi: G1,
 }
 
 impl Serialize for PrfOutput {
@@ -138,7 +130,7 @@ impl<'de> Deserialize<'de> for PrfOutput {
         D: Deserializer<'de>,
     {
         let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
-        let phi = G1Point::deserialize_compressed(&bytes[..])
+        let phi = G1::deserialize_compressed(&bytes[..])
             .map_err(|e| DeError::custom(format!("Deserialization error: {}", e)))?;
         Ok(PrfOutput { phi })
     }
@@ -230,9 +222,9 @@ pub struct PublicParams {
     /// Maximum out-degree
     pub max_out_degree: usize,
     /// Generators for G1
-    pub g1_generators: Vec<G1Point>,
+    pub g1_generators: Vec<G1>,
     /// Generators for G2
-    pub g2_generators: Vec<G2Point>,
+    pub g2_generators: Vec<G2>,
     /// Groth16 proving/verifying keys (stub)
     pub groth16_params: Vec<u8>,
 }

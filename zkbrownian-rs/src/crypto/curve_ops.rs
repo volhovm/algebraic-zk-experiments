@@ -1,19 +1,20 @@
-//! Curve operations for BLS12-381
+//! Curve operations for public keys
 //!
-//! Operations on G1 and G2 groups
+//! Operations on Grumpkin curve (G3) for public key operations
 
-use crate::types::{DiversifiedPublicKey, Diversifier, PublicKey, ScalarField, SecretKey};
-use ark_bls12_381::G2Projective;
+use crate::crypto::curve::{scalar_to_grumpkin_scalar, G3Proj, ScalarField};
+use crate::types::{DiversifiedPublicKey, Diversifier, PublicKey, SecretKey};
 use ark_ec::{CurveGroup, PrimeGroup};
 use ark_ff::Field;
 use ark_std::UniformRand;
 use rand::Rng;
 
-/// Key generation: generate (sk, pk) pair where pk = G^sk in G2
+/// Key generation: generate (sk, pk) pair where pk = G^sk on Grumpkin (G3)
 pub fn keygen<R: Rng>(rng: &mut R) -> (SecretKey, PublicKey) {
     let sk = ScalarField::rand(rng);
-    let generator = G2Projective::generator();
-    let pk = (generator * sk).into_affine();
+    let generator = G3Proj::generator();
+    let sk_grumpkin = scalar_to_grumpkin_scalar(&sk);
+    let pk = (generator * sk_grumpkin).into_affine();
 
     (SecretKey { sk }, PublicKey { pk })
 }
@@ -29,11 +30,12 @@ pub fn diversify_with_diversifier(
     pk: &PublicKey,
     diversifier: &Diversifier,
 ) -> (DiversifiedPublicKey, Diversifier) {
-    let generator = G2Projective::generator();
-    let pk_proj = G2Projective::from(pk.pk);
+    let generator = G3Proj::generator();
+    let pk_proj = G3Proj::from(pk.pk);
+    let d_grumpkin = scalar_to_grumpkin_scalar(&diversifier.d);
 
-    let ppk_1 = (pk_proj * diversifier.d).into_affine();
-    let ppk_2 = (generator * diversifier.d).into_affine();
+    let ppk_1 = (pk_proj * d_grumpkin).into_affine();
+    let ppk_2 = (generator * d_grumpkin).into_affine();
 
     (DiversifiedPublicKey { ppk_1, ppk_2 }, diversifier.clone())
 }
@@ -41,8 +43,9 @@ pub fn diversify_with_diversifier(
 /// Check if diversified public key is valid for a given secret key
 /// Checks if ppk_2^sk = ppk_1 (for receiver detection)
 pub fn check_diversified_ownership(sk: &SecretKey, ppk: &DiversifiedPublicKey) -> bool {
-    let ppk_2_proj = G2Projective::from(ppk.ppk_2);
-    let expected = (ppk_2_proj * sk.sk).into_affine();
+    let ppk_2_proj = G3Proj::from(ppk.ppk_2);
+    let sk_grumpkin = scalar_to_grumpkin_scalar(&sk.sk);
+    let expected = (ppk_2_proj * sk_grumpkin).into_affine();
     expected == ppk.ppk_1
 }
 
@@ -70,9 +73,10 @@ mod tests {
         let mut rng = thread_rng();
         let (sk, pk) = keygen(&mut rng);
 
-        // Verify pk = G^sk
-        let generator = G2Projective::generator();
-        let expected_pk = (generator * sk.sk).into_affine();
+        // Verify pk = G^sk on Grumpkin (G3)
+        let generator = G3Proj::generator();
+        let sk_grumpkin = scalar_to_grumpkin_scalar(&sk.sk);
+        let expected_pk = (generator * sk_grumpkin).into_affine();
         assert_eq!(pk.pk, expected_pk);
     }
 
