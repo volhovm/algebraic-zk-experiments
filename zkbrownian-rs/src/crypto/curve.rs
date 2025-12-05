@@ -86,8 +86,24 @@ pub type PairingEngine = Bls12_381;
 /// Convert BLS12-381 Fr to Grumpkin Fr (scalar field)
 /// This is needed because BLS12-381 Fr = Grumpkin base field,
 /// but we need Grumpkin's scalar field for curve operations
+///
+/// Note: The two fields have different moduli, so we reduce modulo Grumpkin's field
 pub fn scalar_to_grumpkin_scalar(scalar: &ScalarField) -> GrumpkinScalarField {
-    use ark_ff::PrimeField;
-    let bytes = scalar.into_bigint();
-    GrumpkinScalarField::from_bigint(bytes).expect("Conversion should succeed")
+    use ark_ff::{BigInteger, PrimeField};
+    let bigint = scalar.into_bigint();
+
+    // Try direct conversion first
+    if let Some(result) = GrumpkinScalarField::from_bigint(bigint) {
+        return result;
+    }
+
+    // If direct conversion fails, convert via bytes with modular reduction
+    // This handles cases where BLS Fr > Grumpkin Fr
+    let mut bytes = [0u8; 32];
+    let bigint_bytes = bigint.to_bytes_le();
+    let copy_len = std::cmp::min(bytes.len(), bigint_bytes.len());
+    bytes[..copy_len].copy_from_slice(&bigint_bytes[..copy_len]);
+
+    // from_le_bytes_mod_order performs modular reduction automatically
+    GrumpkinScalarField::from_le_bytes_mod_order(&bytes)
 }

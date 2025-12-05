@@ -12,6 +12,90 @@ use ark_ec::{CurveGroup, PrimeGroup};
 use ark_std::UniformRand;
 use rand::Rng;
 
+/// Generated state bundle containing all protocol initialization data
+pub struct GeneratedState {
+    /// Protocol state with merkle trees
+    pub protocol_state: ProtocolState,
+    /// Secret keys for all users (indexed by user index)
+    pub secret_keys: Vec<SecretKey>,
+    /// Public keys for all users (indexed by user index)
+    pub public_keys: Vec<PublicKey>,
+    /// Weight matrix for routing
+    pub weight_matrix: WeightMatrix,
+}
+
+/// Generate initial protocol state with keys and weight commitments
+///
+/// This function models the protocol initialization where:
+/// 1. Each user generates their pk/sk pair
+/// 2. Each user sets weights to their neighbors
+/// 3. All weights are committed globally via Merkle trees
+///
+/// # Arguments
+/// * `num_users` - Number of users in the protocol
+/// * `rng` - Random number generator
+///
+/// # Returns
+/// GeneratedState containing protocol state, keys, and weight matrix
+pub fn generate_state<R: Rng>(num_users: usize, rng: &mut R) -> GeneratedState {
+    use crate::crypto::curve_ops::keygen;
+    use crate::types::{MerkleTree, SubMerkleTree};
+
+    // Step 1: Generate keys for all users
+    let mut secret_keys = Vec::new();
+    let mut public_keys = Vec::new();
+
+    for _ in 0..num_users {
+        let (sk, pk) = keygen(rng);
+        secret_keys.push(sk);
+        public_keys.push(pk);
+    }
+
+    // Step 2: Generate weight matrix
+    // For simplicity, use uniform distribution (each user connects to all others equally)
+    let weight_matrix = WeightMatrix::uniform(num_users, crate::WEIGHT_SUM);
+
+    // Step 3: Build sub-merkle trees for each user
+    let mut sub_merkle_trees = Vec::new();
+    let mut user_data = Vec::new();
+
+    for i in 0..num_users {
+        // Get weights for this user from the weight matrix
+        let weights = weight_matrix.get_weights(i);
+
+        // Build list of (neighbor_pk, weight) for this user
+        let mut neighbor_weights = Vec::new();
+        for &(neighbor_idx, weight) in weights {
+            if neighbor_idx < public_keys.len() {
+                neighbor_weights.push((public_keys[neighbor_idx].clone(), weight));
+            }
+        }
+
+        // Build sub-merkle tree for this user's weights
+        let sub_tree = SubMerkleTree::build(&neighbor_weights);
+        sub_merkle_trees.push(sub_tree.clone());
+
+        // Add to user data for main tree
+        user_data.push((public_keys[i].clone(), sub_tree));
+    }
+
+    // Step 4: Build main merkle tree
+    let merkle_tree = MerkleTree::build(&user_data);
+
+    // Step 5: Assemble protocol state
+    let protocol_state = ProtocolState {
+        merkle_tree,
+        sub_merkle_trees,
+    };
+
+    GeneratedState {
+        protocol_state,
+        secret_keys,
+        public_keys,
+        weight_matrix,
+    }
+}
+
 /// Forward function: Forward(pk_ν, sk_ν, m) -> (m', k_R, d)
 ///
 /// Takes a message and forwards it to the next hop, generating a proof
@@ -225,5 +309,105 @@ mod tests {
         // Should fail with MaxHopsExceeded
         let result = forward(&pk, &sk, &message, &weight_matrix, &all_pks, &mut rng);
         assert!(matches!(result, Err(ProtocolError::MaxHopsExceeded)));
+    }
+
+    #[test]
+    fn test_generate_state_with_merkle_proofs() {
+        use crate::crypto::poseidon::PoseidonHash;
+
+        let mut rng = thread_rng();
+        let num_users = 8;
+
+        // Generate protocol state
+        let generated_state = generate_state(num_users, &mut rng);
+
+        // Verify basic structure
+        assert_eq!(generated_state.secret_keys.len(), num_users);
+        assert_eq!(generated_state.public_keys.len(), num_users);
+        assert_eq!(
+            generated_state.protocol_state.sub_merkle_trees.len(),
+            num_users
+        );
+
+        let merkle_tree = &generated_state.protocol_state.merkle_tree;
+
+        println!("Generated state for {} users", num_users);
+        println!("Merkle tree root: {:?}", merkle_tree.root);
+        println!("Merkle tree depth: {}", merkle_tree.depth());
+
+        // Test merkle proofs for several users
+        for user_idx in [0, 3, 7] {
+            println!("\nTesting Merkle proof for user {}", user_idx);
+
+            // Get the merkle proof for this user
+            let proof = merkle_tree
+                .get_proof(user_idx)
+                .expect("Should get valid proof");
+
+            println!("Proof length: {}", proof.len());
+
+            // Get the leaf for this user
+            let leaf = merkle_tree.leaves[user_idx];
+            let (pk_x, pk_y, m2_root) = leaf;
+
+            // Verify the proof by recomputing the root
+            let hasher = PoseidonHash::new();
+
+            // Hash the leaf
+            let mut current_hash = hasher.hash(&[pk_x, pk_y, m2_root]);
+            let mut current_index = user_idx;
+
+            println!("Leaf hash: {:?}", current_hash);
+
+            // Walk up the tree using the proof
+            for (level, sibling_hash) in proof.iter().enumerate() {
+                // Determine if current node is left or right child
+                let is_left = current_index % 2 == 0;
+
+                current_hash = if is_left {
+                    // Current is left, sibling is right
+                    hasher.hash(&[current_hash, *sibling_hash])
+                } else {
+                    // Current is right, sibling is left
+                    hasher.hash(&[*sibling_hash, current_hash])
+                };
+
+                current_index /= 2;
+                println!("Level {}: hash = {:?}", level, current_hash);
+            }
+
+            // Verify the computed root matches the actual root
+            assert_eq!(
+                current_hash, merkle_tree.root,
+                "Merkle proof verification failed for user {}",
+                user_idx
+            );
+
+            println!("✓ Merkle proof verified for user {}", user_idx);
+        }
+
+        // Also verify that the sub-merkle trees have the correct structure
+        for (user_idx, sub_tree) in generated_state
+            .protocol_state
+            .sub_merkle_trees
+            .iter()
+            .enumerate()
+        {
+            // Check that the sub-tree has the right number of leaves
+            assert_eq!(
+                sub_tree.leaves.len(),
+                crate::types::SubMerkleTree::MAX_LEAVES
+            );
+
+            // Check that the 0-th leaf is (0, 0, 0)
+            let zero_leaf = sub_tree.leaves[0];
+            assert_eq!(zero_leaf.0, ScalarField::from(0u64));
+            assert_eq!(zero_leaf.1, ScalarField::from(0u64));
+            assert_eq!(zero_leaf.2, ScalarField::from(0u64));
+
+            println!("User {} sub-tree root: {:?}", user_idx, sub_tree.root);
+        }
+
+        println!("\n✓ All Merkle proofs verified successfully!");
     }
 }
