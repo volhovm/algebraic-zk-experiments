@@ -1,9 +1,9 @@
 //! Forward function implementation
 //!
-//! Core forwarding logic: Forward(pk_ν, sk_ν, m) -> (m', k_R, d)
+//! Core forwarding logic: Forward(user_view, m) -> (m', k_R, d)
 
 use crate::crypto::{compute_prf, diversify_with_diversifier, extract_routing_value, PoseidonHash};
-use crate::protocol::routing::{select_next_hop, WeightMatrix};
+use crate::protocol::routing::WeightMatrix;
 use crate::proving::circuits::ForwardCircuit;
 use crate::types::*;
 use crate::MAX_HOPS;
@@ -167,7 +167,40 @@ pub fn generate_state<R: Rng>(num_users: usize, rng: &mut R) -> GeneratedState {
     }
 }
 
-/// Forward function: Forward(pk_ν, sk_ν, m) -> (m', k_R, d)
+/// Select next hop based on routing value ρ and user's neighbor view
+///
+/// Uses the cumulative weight distribution from the user's neighbors.
+///
+/// # Arguments
+/// * `rho` - 32-bit routing value from PRF
+/// * `neighbours_view` - User's view of their neighbors
+///
+/// # Returns
+/// (index, public_key) of selected next hop
+fn select_next_hop_from_view(
+    rho: u32,
+    neighbours_view: &NeighboursView,
+) -> ProtocolResult<(usize, PublicKey)> {
+    if neighbours_view.neighbors.is_empty() {
+        return Err(ProtocolError::InvalidWeightSelection);
+    }
+
+    // Build cumulative distribution from neighbor weights
+    let mut cumulative: u64 = 0;
+    for neighbor in &neighbours_view.neighbors {
+        cumulative += neighbor.weight as u64;
+        if (rho as u64) < cumulative {
+            return Ok((neighbor.index, neighbor.public_key.clone()));
+        }
+    }
+
+    // If we get here, ρ didn't fall into any bucket (shouldn't happen if weights sum correctly)
+    // Default to last neighbor
+    let last_neighbor = neighbours_view.neighbors.last().unwrap();
+    Ok((last_neighbor.index, last_neighbor.public_key.clone()))
+}
+
+/// Forward function: Forward(user_view, m) -> (m', k_R, d)
 ///
 /// Takes a message and forwards it to the next hop, generating a proof
 /// of correct forwarding.
@@ -182,22 +215,17 @@ pub fn generate_state<R: Rng>(num_users: usize, rng: &mut R) -> GeneratedState {
 /// 7. Return updated message m'
 ///
 /// # Arguments
-/// * `pk` - Public key of current forwarder
-/// * `sk` - Secret key of current forwarder
+/// * `user_view` - User's complete view (secret key, public key, neighbors)
 /// * `message` - Current message to forward
-/// * `weight_matrix` - Weight matrix for routing decisions
-/// * `all_public_keys` - List of all node public keys
+/// * `rng` - Random number generator
 ///
 /// # Returns
 /// * `m'` - Updated message with new hop added
 /// * `k_R` - Index of receiver node
 /// * `d` - Diversifier used for ppk_{ν+1}
 pub fn forward<R: Rng>(
-    pk: &PublicKey,
-    sk: &SecretKey,
+    user_view: &UserView,
     message: &Message,
-    weight_matrix: &WeightMatrix,
-    all_public_keys: &[PublicKey],
     rng: &mut R,
 ) -> ProtocolResult<(Message, usize, Diversifier)> {
     // Step 1: Check hop count
@@ -224,15 +252,15 @@ pub fn forward<R: Rng>(
 
     // Step 3: Compute φ_{ν+1} = G^{1/(θ+sk)}
     let generator = G1Projective::generator().into_affine();
-    let phi_nu_plus_1 = compute_prf(&theta, sk, &generator)
+    let phi_nu_plus_1 = compute_prf(&theta, &user_view.secret_key, &generator)
         .ok_or_else(|| ProtocolError::CryptoError("PRF computation failed (θ+sk=0)".to_string()))?;
 
     // Step 4: Select next hop
     // Extract ρ_{ν+1} from φ_{ν+1}
     let rho_nu_plus_1 = extract_routing_value(&phi_nu_plus_1);
 
-    // Use ρ and weight matrix to select next hop
-    let (k_r, pk_nu_plus_1) = select_next_hop(rho_nu_plus_1, weight_matrix, all_public_keys)?;
+    // Use ρ and user's neighbor view to select next hop
+    let (k_r, pk_nu_plus_1) = select_next_hop_from_view(rho_nu_plus_1, &user_view.neighbours_view)?;
 
     // Step 5: Create diversified public key ppk_{ν+1}
     let d = Diversifier {
@@ -243,15 +271,15 @@ pub fn forward<R: Rng>(
     // Step 6: Generate proof π_{ν+1}
     // TODO: Full proof generation using all five circuits
     let pi_nu_plus_1 = generate_forward_proof(
-        pk,
-        sk,
+        &user_view.public_key,
+        &user_view.secret_key,
         message,
         &theta,
         &phi_nu_plus_1,
         &ppk_nu_plus_1,
         k_r,
         &d,
-        weight_matrix,
+        &user_view.neighbours_view,
     )?;
 
     // Step 7: Create updated message m'
@@ -282,7 +310,7 @@ fn generate_forward_proof(
     _ppk_nu_plus_1: &DiversifiedPublicKey,
     _k_r: usize,
     _d: &Diversifier,
-    _weight_matrix: &WeightMatrix,
+    _neighbours_view: &NeighboursView,
 ) -> ProtocolResult<Proof> {
     // TODO: Full proof generation
     // For now, return a stub proof
@@ -309,36 +337,35 @@ fn generate_forward_proof(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::curve_ops::keygen;
     use crate::protocol::spawn::spawn;
-    use crate::WEIGHT_SUM;
     use rand::thread_rng;
 
     #[test]
     fn test_forward_basic() {
         let mut rng = thread_rng();
 
-        // Setup: create keys for multiple nodes
-        let (sk1, pk1) = keygen(&mut rng);
-        let (_sk2, pk2) = keygen(&mut rng);
-        let (_sk3, pk3) = keygen(&mut rng);
+        // Setup: generate protocol state with 3 users
+        let generated_state = generate_state(3, &mut rng);
+        let user_0_view = &generated_state.users_view[0];
 
-        let all_pks = vec![pk1.clone(), pk2.clone(), pk3.clone()];
+        // Spawn initial message from user 0
+        let message = spawn(
+            &user_0_view.secret_key,
+            &user_0_view.public_key,
+            1,
+            100,
+            &mut rng,
+        )
+        .unwrap();
 
-        // Create weight matrix (simplified)
-        let weight_matrix = WeightMatrix::uniform(3, WEIGHT_SUM);
-
-        // Spawn initial message
-        let message = spawn(&sk1, &pk1, 1, 100, &mut rng).unwrap();
-
-        // Forward the message
-        let result = forward(&pk1, &sk1, &message, &weight_matrix, &all_pks, &mut rng);
+        // Forward the message using user 0's view
+        let result = forward(user_0_view, &message, &mut rng);
 
         match result {
             Ok((new_message, k_r, _d)) => {
                 // Check message was updated
                 assert_eq!(new_message.hop_count(), 1);
-                assert!(k_r < all_pks.len());
+                assert!(k_r < 3); // Should be one of the 3 users
                 println!("Message forwarded to node {}", k_r);
             }
             Err(e) => {
@@ -350,19 +377,27 @@ mod tests {
     #[test]
     fn test_forward_max_hops() {
         let mut rng = thread_rng();
-        let (sk, pk) = keygen(&mut rng);
-        let all_pks = vec![pk.clone()];
-        let weight_matrix = WeightMatrix::uniform(1, WEIGHT_SUM);
+
+        // Setup: generate protocol state with 1 user
+        let generated_state = generate_state(1, &mut rng);
+        let user_0_view = &generated_state.users_view[0];
 
         // Create a message with maximum hops
-        let mut message = spawn(&sk, &pk, 1, 100, &mut rng).unwrap();
+        let mut message = spawn(
+            &user_0_view.secret_key,
+            &user_0_view.public_key,
+            1,
+            100,
+            &mut rng,
+        )
+        .unwrap();
 
         // Add MAX_HOPS hops manually
         for _ in 0..MAX_HOPS {
             message.hops.push(Hop {
                 ppk: DiversifiedPublicKey {
-                    ppk_1: pk.pk,
-                    ppk_2: pk.pk,
+                    ppk_1: user_0_view.public_key.pk,
+                    ppk_2: user_0_view.public_key.pk,
                 },
                 phi: PrfOutput {
                     phi: G1Projective::generator().into_affine(),
@@ -378,7 +413,7 @@ mod tests {
         }
 
         // Should fail with MaxHopsExceeded
-        let result = forward(&pk, &sk, &message, &weight_matrix, &all_pks, &mut rng);
+        let result = forward(user_0_view, &message, &mut rng);
         assert!(matches!(result, Err(ProtocolError::MaxHopsExceeded)));
     }
 

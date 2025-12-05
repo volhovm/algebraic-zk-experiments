@@ -1,55 +1,69 @@
 //! Basic example demonstrating the Forward protocol
 //!
 //! This example shows:
-//! 1. Setting up multiple nodes with key pairs
-//! 2. Creating a weight matrix
-//! 3. Spawning an initial message
-//! 4. Forwarding the message through the network
-//! 5. Verifying the message
+//! 1. Generating protocol state with multiple users
+//! 2. Spawning an initial message
+//! 3. Forwarding the message through the network using UserView
+//! 4. Verifying the message
 
 use rand::thread_rng;
-use zkbrownian::crypto::curve_ops::keygen;
 use zkbrownian::protocol::{
-    forward, spawn, verify, BulletinBoard, BulletinBoardEntry, InMemoryBulletinBoard, WeightMatrix,
+    forward, generate_state, spawn, verify, BulletinBoard, BulletinBoardEntry,
+    InMemoryBulletinBoard,
 };
-use zkbrownian::types::{PublicKey, SecretKey, WeightCommitment};
-use zkbrownian::{MAX_HOPS, WEIGHT_SUM};
+use zkbrownian::types::{PublicKey, WeightCommitment};
+use zkbrownian::MAX_HOPS;
 
 fn main() {
     println!("=== ZK Brownian Forward Protocol - Basic Example ===\n");
 
     let mut rng = thread_rng();
 
-    // Step 1: Setup network with multiple nodes
-    println!("Step 1: Setting up network with 5 nodes...");
+    // Step 1: Generate protocol state with multiple users
+    println!("Step 1: Generating protocol state for 5 users...");
     let num_nodes = 5;
-    let mut nodes: Vec<(SecretKey, PublicKey)> = Vec::new();
+    let generated_state = generate_state(num_nodes, &mut rng);
 
     for i in 0..num_nodes {
-        let (sk, pk) = keygen(&mut rng);
-        nodes.push((sk, pk));
-        println!("  Node {} created", i);
+        println!(
+            "  User {} created with {} neighbors",
+            i,
+            generated_state.users_view[i]
+                .neighbours_view
+                .neighbors
+                .len()
+        );
     }
 
-    let all_public_keys: Vec<PublicKey> = nodes.iter().map(|(_, pk)| pk.clone()).collect();
+    let all_public_keys: Vec<PublicKey> = generated_state
+        .users_view
+        .iter()
+        .map(|user_view| user_view.public_key.clone())
+        .collect();
 
-    // Step 2: Create weight matrix (uniform distribution for simplicity)
-    println!("\nStep 2: Creating uniform weight matrix...");
-    let weight_matrix = WeightMatrix::uniform(num_nodes, WEIGHT_SUM);
-    println!("  Each node has equal weight to all other nodes");
+    println!(
+        "  Protocol state merkle root: {:?}",
+        generated_state.protocol_state.merkle_tree.root
+    );
 
-    // Step 3: Create bulletin board
-    println!("\nStep 3: Initializing bulletin board...");
+    // Step 2: Create bulletin board
+    println!("\nStep 2: Initializing bulletin board...");
     let mut bulletin_board = InMemoryBulletinBoard::new();
 
-    // Step 4: Node 0 spawns a message
-    println!("\nStep 4: Node 0 spawns a message...");
+    // Step 3: User 0 spawns a message
+    println!("\nStep 3: User 0 spawns a message...");
     let spawner_index = 0;
-    let (spawner_sk, spawner_pk) = &nodes[spawner_index];
+    let spawner_view = &generated_state.users_view[spawner_index];
     let packet_id = 42;
     let session_id = 1000;
 
-    let message = match spawn(spawner_sk, spawner_pk, packet_id, session_id, &mut rng) {
+    let message = match spawn(
+        &spawner_view.secret_key,
+        &spawner_view.public_key,
+        packet_id,
+        session_id,
+        &mut rng,
+    ) {
         Ok(msg) => {
             println!("  ✓ Message spawned successfully");
             println!("    Packet ID: {}", msg.pid);
@@ -63,8 +77,8 @@ fn main() {
         }
     };
 
-    // Step 5: Forward the message through the network
-    println!("\nStep 5: Forwarding message through network...");
+    // Step 4: Forward the message through the network
+    println!("\nStep 4: Forwarding message through network...");
     let mut current_message = message;
     let mut current_node_index = spawner_index;
 
@@ -73,17 +87,10 @@ fn main() {
         println!("\n  Hop {}:", hop + 1);
         println!("    Current node: {}", current_node_index);
 
-        let (current_sk, current_pk) = &nodes[current_node_index];
+        let current_user_view = &generated_state.users_view[current_node_index];
 
-        match forward(
-            current_pk,
-            current_sk,
-            &current_message,
-            &weight_matrix,
-            &all_public_keys,
-            &mut rng,
-        ) {
-            Ok((new_message, next_node_index, diversifier)) => {
+        match forward(current_user_view, &current_message, &mut rng) {
+            Ok((new_message, next_node_index, _diversifier)) => {
                 println!("    ✓ Message forwarded to node {}", next_node_index);
                 println!("    New hop count: {}", new_message.hop_count());
 
@@ -107,8 +114,8 @@ fn main() {
         }
     }
 
-    // Step 6: Verify the final message
-    println!("\n\nStep 6: Verifying final message...");
+    // Step 5: Verify the final message
+    println!("\n\nStep 5: Verifying final message...");
     let weight_commitment = WeightCommitment {
         commitment: vec![],
         metadata: vec![],
@@ -131,8 +138,8 @@ fn main() {
         }
     }
 
-    // Step 7: Check bulletin board
-    println!("\n\nStep 7: Bulletin board summary:");
+    // Step 6: Check bulletin board
+    println!("\n\nStep 6: Bulletin board summary:");
     let all_messages = bulletin_board.get_all_messages();
     println!("  Total messages posted: {}", all_messages.len());
 
