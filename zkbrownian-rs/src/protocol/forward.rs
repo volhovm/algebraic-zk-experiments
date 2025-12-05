@@ -4,7 +4,6 @@
 
 use crate::crypto::{compute_prf, diversify_with_diversifier, extract_routing_value, PoseidonHash};
 use crate::protocol::routing::WeightMatrix;
-use crate::proving::circuits::ForwardCircuit;
 use crate::types::*;
 use crate::MAX_HOPS;
 use ark_bls12_381::G1Projective;
@@ -309,6 +308,7 @@ pub fn forward<R: Rng>(
         &d,
         &user_view.neighbours_view,
         user_view.own_sub_merkle_root,
+        &user_view.own_merkle_proof,
         v1,
         v2,
     )?;
@@ -322,6 +322,165 @@ pub fn forward<R: Rng>(
     });
 
     Ok((new_message, k_r, d))
+}
+
+/// Instance (public inputs) for sender membership proof π_1
+#[derive(Clone, Debug)]
+pub struct SenderMembershipInstance {
+    /// Commitment C1 = g1^{pk_x} * g2^{pk_y} * g3^{md_{2,k_s}} * g4^{r1}
+    pub c1: G1Projective,
+    /// Root of the main merkle tree
+    pub merkle_root: ScalarField,
+}
+
+/// Witness (private inputs) for sender membership proof π_1
+#[derive(Clone, Debug)]
+pub struct SenderMembershipWitness {
+    /// Sender's public key x-coordinate
+    pub pk_x: ScalarField,
+    /// Sender's public key y-coordinate
+    pub pk_y: ScalarField,
+    /// Sender's sub-merkle tree root (md_{2,k_s})
+    pub md_2_k_s: ScalarField,
+    /// Blinding factor for commitment C1
+    pub r1: ScalarField,
+    /// Merkle proof path for sender's inclusion in main tree
+    pub merkle_proof: Vec<ScalarField>,
+}
+
+/// Generate sender membership proof (π_1)
+///
+/// This proves that the sender's public key is committed in C1 and
+/// is included in the main merkle tree.
+///
+/// # Arguments
+/// * `instance` - Public inputs (C1, merkle_root)
+/// * `witness` - Private inputs (pk_x, pk_y, md_{2,k_s}, r1, merkle_proof)
+///
+/// # Returns
+/// Serialized Groth16 proof bytes
+fn prove_sender_membership(
+    _instance: &SenderMembershipInstance,
+    _witness: &SenderMembershipWitness,
+) -> ProtocolResult<Vec<u8>> {
+    // TODO: Actual Groth16 proof generation
+    // For now, return stub proof
+    Ok(vec![0u8; 32])
+}
+
+/// Instance (public inputs) for receiver membership proof π_3
+#[derive(Clone, Debug)]
+pub struct ReceiverMembershipInstance {
+    /// Commitment C2 = g1^{pk_{r,x}} * g2^{pk_{r,y}} * g3^{md_{2,k_r}} * g4^{r2}
+    pub c2: G1Projective,
+    /// Root of the main merkle tree
+    pub merkle_root: ScalarField,
+}
+
+/// Witness (private inputs) for receiver membership proof π_3
+#[derive(Clone, Debug)]
+pub struct ReceiverMembershipWitness {
+    /// Receiver's public key x-coordinate
+    pub pk_r_x: ScalarField,
+    /// Receiver's public key y-coordinate
+    pub pk_r_y: ScalarField,
+    /// Receiver's sub-merkle tree root (md_{2,k_r})
+    pub md_2_k_r: ScalarField,
+    /// Blinding factor for commitment C2
+    pub r2: ScalarField,
+    /// Merkle proof path for receiver's inclusion in main tree
+    pub merkle_proof: Vec<ScalarField>,
+}
+
+/// Generate receiver membership proof (π_3)
+///
+/// This proves that the receiver's public key is committed in C2 and
+/// is included in the main merkle tree.
+///
+/// # Arguments
+/// * `instance` - Public inputs (C2, merkle_root)
+/// * `witness` - Private inputs (pk_r_x, pk_r_y, md_{2,k_r}, r2, merkle_proof)
+///
+/// # Returns
+/// Serialized Groth16 proof bytes
+fn prove_receiver_membership(
+    _instance: &ReceiverMembershipInstance,
+    _witness: &ReceiverMembershipWitness,
+) -> ProtocolResult<Vec<u8>> {
+    // TODO: Actual Groth16 proof generation
+    // For now, return stub proof
+    Ok(vec![0u8; 32])
+}
+
+/// Instance (public inputs) for weight subtree proof π_2
+#[derive(Clone, Debug)]
+pub struct WeightSubtreeInstance {
+    /// Commitment to sender (C1)
+    pub c1: G1Projective,
+    /// Commitment to receiver (C2)
+    pub c2: G1Projective,
+    /// Commitment to v1 (cumulative weight before receiver)
+    pub c_v1: G1Projective,
+    /// Commitment to v2 (cumulative weight including receiver)
+    pub c_v2: G1Projective,
+}
+
+/// Witness (private inputs) for weight subtree proof π_2
+#[derive(Clone, Debug)]
+pub struct WeightSubtreeWitness {
+    /// Sender's public key x-coordinate
+    pub pk_x: ScalarField,
+    /// Sender's public key y-coordinate
+    pub pk_y: ScalarField,
+    /// Sender's sub-merkle tree root (md_{2,k_s})
+    pub md_2_k_s: ScalarField,
+    /// Blinding factor for C1
+    pub r1: ScalarField,
+    /// Receiver's public key x-coordinate
+    pub pk_r_x: ScalarField,
+    /// Receiver's public key y-coordinate
+    pub pk_r_y: ScalarField,
+    /// Receiver's sub-merkle tree root (md_{2,k_r})
+    pub md_2_k_r: ScalarField,
+    /// Blinding factor for C2
+    pub r2: ScalarField,
+    /// Cumulative weight before receiver (v1)
+    pub v1: u64,
+    /// Blinding factor for C_v1
+    pub r_v1: ScalarField,
+    /// Cumulative weight including receiver (v2)
+    pub v2: u64,
+    /// Blinding factor for C_v2
+    pub r_v2: ScalarField,
+    /// Merkle proof path in sender's sub-tree to the leaf corresponding to v1
+    /// This points to the previous neighbor in the cumulative weight distribution
+    pub sub_merkle_proof_v1: Vec<ScalarField>,
+    /// Merkle proof path in sender's sub-tree to the leaf corresponding to v2
+    /// This points to the receiver's leaf in the cumulative weight distribution
+    pub sub_merkle_proof_v2: Vec<ScalarField>,
+}
+
+/// Generate weight subtree proof (π_2)
+///
+/// This proves that:
+/// 1. The commitments C1 and C2 are correctly formed
+/// 2. The values v1 and v2 are correctly committed in C_v1 and C_v2
+/// 3. Both v1 and v2 exist in the sender's sub-merkle tree (md_{2,k_s})
+/// 4. v1 < ρ ≤ v2 (range proof for routing value)
+///
+/// # Arguments
+/// * `instance` - Public inputs (C1, C2, C_v1, C_v2)
+/// * `witness` - Private inputs (all exponents and sub-merkle proofs)
+///
+/// # Returns
+/// Serialized Groth16 proof bytes
+fn prove_weight_subtree(
+    _instance: &WeightSubtreeInstance,
+    _witness: &WeightSubtreeWitness,
+) -> ProtocolResult<Vec<u8>> {
+    // TODO: Actual Groth16 proof generation
+    // For now, return stub proof
+    Ok(vec![0u8; 32])
 }
 
 /// Generate the forward proof π_{ν+1}
@@ -344,6 +503,7 @@ fn generate_forward_proof(
     _d: &Diversifier,
     neighbours_view: &NeighboursView,
     own_sub_merkle_root: ScalarField,
+    own_merkle_proof: &[ScalarField],
     v1: u64,
     v2: u64,
 ) -> ProtocolResult<Proof> {
@@ -424,26 +584,76 @@ fn generate_forward_proof(
     // C_{v2} = g1^{v2} * g2^{r_v2}
     let c_v2 = (g1_base_proj * ScalarField::from(v2)) + (g2_base_proj * r_v2);
 
-    // For now, we just verify that the commitments were created successfully
-    // In a real implementation, these would be used in the proof generation
-    let _ = (c1, c2, c_v1, c_v2);
+    // TODO: In a real implementation, the merkle root would be part of the public parameters
+    // or passed as a parameter. For now, we use a placeholder.
+    let merkle_root = ScalarField::from(0u64);
 
-    // Create circuit
-    let _circuit = ForwardCircuit::new();
+    // Generate proof π_1: Sender membership
+    let sender_instance = SenderMembershipInstance {
+        c1: c1.clone(),
+        merkle_root,
+    };
+    let sender_witness = SenderMembershipWitness {
+        pk_x: pk_x_scalar,
+        pk_y: pk_y_scalar,
+        md_2_k_s,
+        r1,
+        merkle_proof: own_merkle_proof.to_vec(),
+    };
+    let pi_1 = prove_sender_membership(&sender_instance, &sender_witness)?;
 
-    // Generate witness
-    // ... (witness generation logic)
+    // Generate proof π_3: Receiver membership
+    let receiver_instance = ReceiverMembershipInstance {
+        c2: c2.clone(),
+        merkle_root,
+    };
+    let receiver_witness = ReceiverMembershipWitness {
+        pk_r_x: pk_r_x_scalar,
+        pk_r_y: pk_r_y_scalar,
+        md_2_k_r,
+        r2,
+        merkle_proof: receiver.merkle_proof.clone(),
+    };
+    let pi_3 = prove_receiver_membership(&receiver_instance, &receiver_witness)?;
 
-    // Generate proofs for each component
-    // π_1, π_2, π_3, π_{4,G1}, π_{4,G2}
+    // Generate proof π_2: Weight subtree
+    // TODO: In a real implementation, the UserView would need to include the sub-merkle tree
+    // structure to generate proofs for v1 and v2. For now, we use empty vectors as placeholders.
+    let weight_instance = WeightSubtreeInstance {
+        c1: c1.clone(),
+        c2: c2.clone(),
+        c_v1: c_v1.clone(),
+        c_v2: c_v2.clone(),
+    };
+    let weight_witness = WeightSubtreeWitness {
+        pk_x: pk_x_scalar,
+        pk_y: pk_y_scalar,
+        md_2_k_s,
+        r1,
+        pk_r_x: pk_r_x_scalar,
+        pk_r_y: pk_r_y_scalar,
+        md_2_k_r,
+        r2,
+        v1,
+        r_v1,
+        v2,
+        r_v2,
+        sub_merkle_proof_v1: vec![], // TODO: Generate actual sub-merkle proof
+        sub_merkle_proof_v2: vec![], // TODO: Generate actual sub-merkle proof
+    };
+    let pi_2 = prove_weight_subtree(&weight_instance, &weight_witness)?;
 
-    // For now, stub
+    // TODO: Generate proofs π_{4,G1} and π_{4,G2}
+    // For now, use stub proofs
+    let pi_4_g1 = vec![0u8; 32];
+    let pi_4_g2 = vec![0u8; 32];
+
     Ok(Proof {
-        pi_1: vec![0u8; 32],
-        pi_2: vec![0u8; 32],
-        pi_3: vec![0u8; 32],
-        pi_4_g1: vec![0u8; 32],
-        pi_4_g2: vec![0u8; 32],
+        pi_1,
+        pi_2,
+        pi_3,
+        pi_4_g1,
+        pi_4_g2,
     })
 }
 
