@@ -1,11 +1,12 @@
 //! Generator pre-generation for cryptographic operations
 //!
-//! Pre-generates random generators G_i (in G1) and H_i (in G2)
+//! Pre-generates random generators G_i (in G1), H_i (in G2), and K_i (in G3)
 //! as required by the protocol specification
 
-use crate::types::{G1Point, G2Point};
+use crate::types::{G1Point, G2Point, G3};
 use ark_bls12_381::{G1Projective, G2Projective};
 use ark_ec::{CurveGroup, PrimeGroup};
+use ark_grumpkin::Projective as GrumpkinProjective;
 use ark_std::UniformRand;
 use rand::Rng;
 
@@ -23,6 +24,13 @@ pub fn generate_g2_generators<R: Rng>(rng: &mut R, count: usize) -> Vec<G2Point>
         .collect()
 }
 
+/// Generate N random generators in G3 (Grumpkin)
+pub fn generate_g3_generators<R: Rng>(rng: &mut R, count: usize) -> Vec<G3> {
+    (0..count)
+        .map(|_| GrumpkinProjective::rand(rng).into_affine())
+        .collect()
+}
+
 /// Standard generators
 #[derive(Clone, Debug)]
 pub struct Generators {
@@ -30,10 +38,14 @@ pub struct Generators {
     pub g1_base: G1Point,
     /// Base generator for G2 (standard curve generator)
     pub g2_base: G2Point,
+    /// Base generator for G3/Grumpkin (standard curve generator)
+    pub g3_base: G3,
     /// Additional G1 generators: G_1, G_2, G_3, ...
     pub g1_generators: Vec<G1Point>,
     /// Additional G2 generators: H, H_1, H_2, ...
     pub g2_generators: Vec<G2Point>,
+    /// Additional G3 generators: K_1, K_2, K_3, ...
+    pub g3_generators: Vec<G3>,
 }
 
 impl Generators {
@@ -42,12 +54,15 @@ impl Generators {
     /// # Arguments
     /// * `num_g1` - Number of additional G1 generators needed
     /// * `num_g2` - Number of additional G2 generators needed
-    pub fn generate<R: Rng>(rng: &mut R, num_g1: usize, num_g2: usize) -> Self {
+    /// * `num_g3` - Number of additional G3 generators needed
+    pub fn generate<R: Rng>(rng: &mut R, num_g1: usize, num_g2: usize, num_g3: usize) -> Self {
         Self {
             g1_base: G1Projective::generator().into_affine(),
             g2_base: G2Projective::generator().into_affine(),
+            g3_base: GrumpkinProjective::generator().into_affine(),
             g1_generators: generate_g1_generators(rng, num_g1),
             g2_generators: generate_g2_generators(rng, num_g2),
+            g3_generators: generate_g3_generators(rng, num_g3),
         }
     }
 
@@ -66,6 +81,15 @@ impl Generators {
             Some(&self.g2_base)
         } else {
             self.g2_generators.get(index - 1)
+        }
+    }
+
+    /// Get a specific G3 generator by index
+    pub fn g3(&self, index: usize) -> Option<&G3> {
+        if index == 0 {
+            Some(&self.g3_base)
+        } else {
+            self.g3_generators.get(index - 1)
         }
     }
 }
@@ -106,17 +130,23 @@ mod tests {
     #[test]
     fn test_generators_struct() {
         let mut rng = thread_rng();
-        let generators = Generators::generate(&mut rng, 10, 10);
+        let generators = Generators::generate(&mut rng, 10, 10, 10);
 
         // Check base generators
         assert_eq!(generators.g1_base, G1Projective::generator().into_affine());
         assert_eq!(generators.g2_base, G2Projective::generator().into_affine());
+        assert_eq!(
+            generators.g3_base,
+            GrumpkinProjective::generator().into_affine()
+        );
 
         // Check indexing
         assert_eq!(generators.g1(0).unwrap(), &generators.g1_base);
         assert_eq!(generators.g2(0).unwrap(), &generators.g2_base);
+        assert_eq!(generators.g3(0).unwrap(), &generators.g3_base);
 
         assert!(generators.g1(1).is_some());
         assert!(generators.g2(1).is_some());
+        assert!(generators.g3(1).is_some());
     }
 }

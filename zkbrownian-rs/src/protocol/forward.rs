@@ -483,6 +483,168 @@ fn prove_weight_subtree(
     Ok(vec![0u8; 32])
 }
 
+/// Instance (public inputs) for Schnorr bridging proof π_{4,G1}
+///
+/// This proof bridges the representation of public keys between G3 (Grumpkin)
+/// and G1 (BLS12-381) by expressing G3 coordinates as commitments in G1.
+#[derive(Clone, Debug)]
+pub struct SchnorrBridgingInstance {
+    /// Commitment to pk_star coordinates: G1^{pk_star_x} * G2^{pk_star_y}
+    pub pk_star_coord: G1Projective,
+    /// Commitment to pk_r_star coordinates: G1^{pk_r_star_x} * G2^{pk_r_star_y}
+    pub pk_r_star_coord: G1Projective,
+    /// Commitment to sender (C1)
+    pub c1: G1Projective,
+    /// Commitment to receiver (C2)
+    pub c2: G1Projective,
+    /// Commitment to v1 (cumulative weight before receiver)
+    pub c_v1: G1Projective,
+    /// Commitment to v2 (cumulative weight including receiver)
+    pub c_v2: G1Projective,
+    /// Commitment to routing value G^ρ
+    pub g_rho: G1Projective,
+}
+
+/// Witness (private inputs) for Schnorr bridging proof π_{4,G1}
+#[derive(Clone, Debug)]
+pub struct SchnorrBridgingWitness {
+    // Exponents from C1 commitment
+    /// Sender's public key x-coordinate
+    pub pk_x: ScalarField,
+    /// Sender's public key y-coordinate
+    pub pk_y: ScalarField,
+    /// Sender's sub-merkle tree root
+    pub md_2_k_s: ScalarField,
+    /// Blinding factor for C1
+    pub r1: ScalarField,
+
+    // Exponents from C2 commitment
+    /// Receiver's public key x-coordinate
+    pub pk_r_x: ScalarField,
+    /// Receiver's public key y-coordinate
+    pub pk_r_y: ScalarField,
+    /// Receiver's sub-merkle tree root
+    pub md_2_k_r: ScalarField,
+    /// Blinding factor for C2
+    pub r2: ScalarField,
+
+    // Exponents from C_v1 and C_v2 commitments
+    /// Cumulative weight before receiver
+    pub v1: u64,
+    /// Blinding factor for C_v1
+    pub r_v1: ScalarField,
+    /// Cumulative weight including receiver
+    pub v2: u64,
+    /// Blinding factor for C_v2
+    pub r_v2: ScalarField,
+
+    // Routing value
+    /// Routing value ρ
+    pub rho: ScalarField,
+
+    // Coordinates of pk_star and pk_r_star in G3
+    /// pk_star x-coordinate (converted to BLS12-381 scalar field)
+    pub pk_star_x: ScalarField,
+    /// pk_star y-coordinate (converted to BLS12-381 scalar field)
+    pub pk_star_y: ScalarField,
+    /// pk_r_star x-coordinate (converted to BLS12-381 scalar field)
+    pub pk_r_star_x: ScalarField,
+    /// pk_r_star y-coordinate (converted to BLS12-381 scalar field)
+    pub pk_r_star_y: ScalarField,
+
+    // Blinding factors for pk_star and pk_r_star
+    /// Blinding factor r_star for pk_star = G^{sk} * H^{r_star}
+    pub r_star: ScalarField,
+    /// Blinding factor r_r_star for pk_r_star = pk_r * H^{r_r_star}
+    pub r_r_star: ScalarField,
+}
+
+/// Generate Schnorr bridging proof π_{4,G1}
+///
+/// This proves that:
+/// 1. pk_star and pk_r_star are correctly formed in coordinate representation
+/// 2. All commitments C1, C2, C_v1, C_v2 are consistent with their exponents
+/// 3. The routing value ρ is correctly committed
+///
+/// # Arguments
+/// * `instance` - Public inputs (coordinate commitments and other commitments)
+/// * `witness` - Private inputs (all exponents and coordinates)
+///
+/// # Returns
+/// Serialized Groth16 proof bytes
+fn prove_schnorr_bridging(
+    _instance: &SchnorrBridgingInstance,
+    _witness: &SchnorrBridgingWitness,
+) -> ProtocolResult<Vec<u8>> {
+    // TODO: Actual Groth16 proof generation
+    // For now, return stub proof
+    Ok(vec![0u8; 32])
+}
+
+/// Instance (public inputs) for public key operations proof π_{4,G2}
+///
+/// This proof demonstrates correct application of diversifiers and
+/// hash chain integrity in the forward protocol.
+#[derive(Clone, Debug)]
+pub struct PublicKeyOperationsInstance {
+    /// Blinded sender public key pk_star = G^{sk} * H^{r_star}
+    pub pk_star: G3,
+    /// Blinded receiver public key pk_r_star = pk_r * H^{r_r_star}
+    pub pk_r_star: G3,
+    /// First component of sender's diversified public key (ppk^d)
+    pub ppk_s_1: G3,
+    /// Second component of sender's diversified public key (G^d)
+    pub ppk_s_2: G3,
+    /// First component of receiver's diversified public key (ppk_r^d)
+    pub ppk_r_1: G3,
+    /// Second component of receiver's diversified public key (G^d)
+    pub ppk_r_2: G3,
+    /// Commitment to hash of previous hop: G^θ (in G1)
+    pub g_theta: G1Projective,
+    /// PRF output for current hop: G^φ (in G1)
+    pub g_phi: G1Projective,
+}
+
+/// Witness (private inputs) for public key operations proof π_{4,G2}
+#[derive(Clone, Debug)]
+pub struct PublicKeyOperationsWitness {
+    /// Sender's secret key
+    pub sk: ScalarField,
+    /// Diversifier chosen by sender for this hop
+    pub d: ScalarField,
+    /// Hash value theta from previous hop
+    pub theta: ScalarField,
+    /// PRF output phi for current hop
+    pub phi: ScalarField,
+    /// Blinding factor r_star for pk_star = G^{sk} * H^{r_star}
+    pub r_star: ScalarField,
+    /// Blinding factor r_r_star for pk_r_star = pk_r * H^{r_r_star}
+    pub r_r_star: ScalarField,
+}
+
+/// Generate public key operations proof π_{4,G2}
+///
+/// This proves that:
+/// 1. pk_star and pk_r_star relate correctly to diversified public keys
+/// 2. Diversifier d is correctly applied
+/// 3. Hash chain integrity is maintained (theta, phi)
+/// 4. Sender knows the secret key sk
+///
+/// # Arguments
+/// * `instance` - Public inputs (blinded keys, diversified keys, hash commitments)
+/// * `witness` - Private inputs (sk, d, exponents)
+///
+/// # Returns
+/// Serialized Groth16 proof bytes
+fn prove_public_key_operations(
+    _instance: &PublicKeyOperationsInstance,
+    _witness: &PublicKeyOperationsWitness,
+) -> ProtocolResult<Vec<u8>> {
+    // TODO: Actual Groth16 proof generation
+    // For now, return stub proof
+    Ok(vec![0u8; 32])
+}
+
 /// Generate the forward proof π_{ν+1}
 ///
 /// Generates all five proof components:
@@ -643,10 +805,128 @@ fn generate_forward_proof(
     };
     let pi_2 = prove_weight_subtree(&weight_instance, &weight_witness)?;
 
-    // TODO: Generate proofs π_{4,G1} and π_{4,G2}
-    // For now, use stub proofs
-    let pi_4_g1 = vec![0u8; 32];
-    let pi_4_g2 = vec![0u8; 32];
+    // Generate π_{4,G1} and π_{4,G2} proofs for Schnorr bridging
+    // These proofs connect the public key representations across different groups
+
+    // Get G3 generators for creating pk_star and pk_r_star
+    use crate::crypto::curve::{scalar_to_grumpkin_scalar, G3Proj};
+    use crate::crypto::prf::extract_routing_value;
+
+    let g3_base = pp
+        .generators
+        .g3(0)
+        .ok_or_else(|| ProtocolError::CryptoError("Missing G3 generator 0".to_string()))?;
+    let h3_base = pp
+        .generators
+        .g3(1)
+        .ok_or_else(|| ProtocolError::CryptoError("Missing G3 generator 1".to_string()))?;
+
+    // Convert to projective for scalar multiplication
+    let g3_proj = G3Proj::from(*g3_base);
+    let h3_proj = G3Proj::from(*h3_base);
+
+    // Generate random blinding factors for Schnorr commitments
+    let r_star = ScalarField::rand(&mut rand::thread_rng());
+    let r_r_star = ScalarField::rand(&mut rand::thread_rng());
+
+    // Convert scalar fields to Grumpkin scalar field for G3 operations
+    let sk_grumpkin = scalar_to_grumpkin_scalar(&_sk.sk);
+    let r_star_grumpkin = scalar_to_grumpkin_scalar(&r_star);
+    let r_r_star_grumpkin = scalar_to_grumpkin_scalar(&r_r_star);
+
+    // Create pk_star = G^{sk} * H^{r_star}
+    let pk_star = (g3_proj * sk_grumpkin + h3_proj * r_star_grumpkin).into_affine();
+
+    // Create pk_r_star = pk_r * H^{r_r_star}
+    let pk_r_proj = G3Proj::from(receiver.public_key.pk);
+    let pk_r_star = (pk_r_proj + h3_proj * r_r_star_grumpkin).into_affine();
+
+    // Extract coordinates and convert to BLS12-381 scalar field
+    let pk_star_x_scalar =
+        ScalarField::from_le_bytes_mod_order(&pk_star.x.into_bigint().to_bytes_le());
+    let pk_star_y_scalar =
+        ScalarField::from_le_bytes_mod_order(&pk_star.y.into_bigint().to_bytes_le());
+    let pk_r_star_x_scalar =
+        ScalarField::from_le_bytes_mod_order(&pk_r_star.x.into_bigint().to_bytes_le());
+    let pk_r_star_y_scalar =
+        ScalarField::from_le_bytes_mod_order(&pk_r_star.y.into_bigint().to_bytes_le());
+
+    // Create coordinate commitments for pk_star and pk_r_star
+    // pk_star_coord = G1^{pk_star_x} * G2^{pk_star_y}
+    let pk_star_coord = (g1_base_proj * pk_star_x_scalar) + (g2_base_proj * pk_star_y_scalar);
+
+    // pk_r_star_coord = G1^{pk_r_star_x} * G2^{pk_r_star_y}
+    let pk_r_star_coord = (g1_base_proj * pk_r_star_x_scalar) + (g2_base_proj * pk_r_star_y_scalar);
+
+    // Extract routing value ρ from phi
+    let rho = ScalarField::from(extract_routing_value(_phi_nu_plus_1));
+
+    // Create commitment G^ρ
+    let g_rho = g1_base_proj * rho;
+
+    // Generate proof π_{4,G1}: Schnorr bridging
+    let schnorr_instance = SchnorrBridgingInstance {
+        pk_star_coord,
+        pk_r_star_coord,
+        c1: c1.clone(),
+        c2: c2.clone(),
+        c_v1: c_v1.clone(),
+        c_v2: c_v2.clone(),
+        g_rho,
+    };
+
+    let schnorr_witness = SchnorrBridgingWitness {
+        pk_x: pk_x_scalar,
+        pk_y: pk_y_scalar,
+        md_2_k_s,
+        r1,
+        pk_r_x: pk_r_x_scalar,
+        pk_r_y: pk_r_y_scalar,
+        md_2_k_r,
+        r2,
+        v1,
+        r_v1,
+        v2,
+        r_v2,
+        rho,
+        pk_star_x: pk_star_x_scalar,
+        pk_star_y: pk_star_y_scalar,
+        pk_r_star_x: pk_r_star_x_scalar,
+        pk_r_star_y: pk_r_star_y_scalar,
+        r_star,
+        r_r_star,
+    };
+
+    let pi_4_g1 = prove_schnorr_bridging(&schnorr_instance, &schnorr_witness)?;
+
+    // Generate proof π_{4,G2}: Public key operations
+    // Create G^theta commitment
+    let g_theta = g1_base_proj * *_theta;
+
+    // G^phi is just the PRF output itself (already a G1 point)
+    let g_phi = G1Projective::from(_phi_nu_plus_1.phi);
+
+    let pk_ops_instance = PublicKeyOperationsInstance {
+        pk_star,
+        pk_r_star,
+        ppk_s_1: _ppk_nu_plus_1.ppk_1,
+        ppk_s_2: _ppk_nu_plus_1.ppk_2,
+        ppk_r_1: receiver.public_key.pk, // TODO: Get receiver's actual diversified ppk
+        ppk_r_2: receiver.public_key.pk, // TODO: Get receiver's actual diversified ppk
+        g_theta,
+        g_phi,
+    };
+
+    let pk_ops_witness = PublicKeyOperationsWitness {
+        sk: _sk.sk,
+        d: _d.d,
+        theta: *_theta,
+        phi: *_theta, // TODO: Extract actual phi scalar (not just theta)
+        r_star,
+        r_r_star,
+    };
+
+    let pi_4_g2 = prove_public_key_operations(&pk_ops_instance, &pk_ops_witness)?;
 
     Ok(Proof {
         pi_1,
@@ -670,9 +950,9 @@ mod tests {
             num_nodes: 10,
             max_out_degree: 10,
             g1_generators: vec![],
-            g2_generators: vec![],
+            g3_generators: vec![],
             groth16_params: vec![],
-            generators: Generators::generate(rng, 10, 10),
+            generators: Generators::generate(rng, 10, 10, 10),
         }
     }
 

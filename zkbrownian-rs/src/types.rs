@@ -224,8 +224,8 @@ pub struct PublicParams {
     pub max_out_degree: usize,
     /// Generators for G1
     pub g1_generators: Vec<G1>,
-    /// Generators for G2
-    pub g2_generators: Vec<G2>,
+    /// Generators for G3 (Grumpkin curve, used for public keys)
+    pub g3_generators: Vec<G3>,
     /// Groth16 proving/verifying keys (stub)
     pub groth16_params: Vec<u8>,
     /// Cryptographic generators for the protocol

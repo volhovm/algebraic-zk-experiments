@@ -31,9 +31,9 @@ fn test_basic_forward_protocol() {
         num_nodes,
         max_out_degree: 10,
         g1_generators: vec![],
-        g2_generators: vec![],
+        g3_generators: vec![],
         groth16_params: vec![],
-        generators: Generators::generate(&mut rng, 10, 10),
+        generators: Generators::generate(&mut rng, 10, 10, 10),
     };
 
     for i in 0..num_nodes {
