@@ -12,14 +12,46 @@ use ark_ec::{CurveGroup, PrimeGroup};
 use ark_std::UniformRand;
 use rand::Rng;
 
+/// Information about a single neighbor
+#[derive(Clone, Debug)]
+pub struct NeighborInfo {
+    /// Index of the neighbor in the global merkle tree
+    pub index: usize,
+    /// Public key of the neighbor
+    pub public_key: PublicKey,
+    /// Sub-merkle tree root (M2) of the neighbor
+    pub sub_merkle_root: ScalarField,
+    /// Merkle proof of inclusion in the global tree
+    pub merkle_proof: Vec<ScalarField>,
+    /// Weight to this neighbor
+    pub weight: u32,
+}
+
+/// A node's view of its neighbors
+/// Contains all information a node knows about its neighbors
+#[derive(Clone, Debug)]
+pub struct NeighboursView {
+    /// List of neighbor information
+    pub neighbors: Vec<NeighborInfo>,
+}
+
+/// A single user's complete view of the protocol
+#[derive(Clone, Debug)]
+pub struct UserView {
+    /// User's secret key
+    pub secret_key: SecretKey,
+    /// User's public key
+    pub public_key: PublicKey,
+    /// User's view of their neighbors
+    pub neighbours_view: NeighboursView,
+}
+
 /// Generated state bundle containing all protocol initialization data
 pub struct GeneratedState {
     /// Protocol state with merkle trees
     pub protocol_state: ProtocolState,
-    /// Secret keys for all users (indexed by user index)
-    pub secret_keys: Vec<SecretKey>,
-    /// Public keys for all users (indexed by user index)
-    pub public_keys: Vec<PublicKey>,
+    /// Per-user views (indexed by user index)
+    pub users_view: Vec<UserView>,
     /// Weight matrix for routing
     pub weight_matrix: WeightMatrix,
 }
@@ -84,14 +116,53 @@ pub fn generate_state<R: Rng>(num_users: usize, rng: &mut R) -> GeneratedState {
 
     // Step 5: Assemble protocol state
     let protocol_state = ProtocolState {
-        merkle_tree,
-        sub_merkle_trees,
+        merkle_tree: merkle_tree.clone(),
+        sub_merkle_trees: sub_merkle_trees.clone(),
     };
+
+    // Step 6: Build user views with neighbor information
+    let mut users_view = Vec::new();
+
+    for user_idx in 0..num_users {
+        // Get this user's neighbors from the weight matrix
+        let weights = weight_matrix.get_weights(user_idx);
+
+        // Build neighbor info for each neighbor
+        let mut neighbors = Vec::new();
+        for &(neighbor_idx, weight) in weights {
+            if neighbor_idx >= num_users {
+                continue;
+            }
+
+            // Get merkle proof for this neighbor
+            let merkle_proof = merkle_tree
+                .get_proof(neighbor_idx)
+                .expect("Should have proof for valid neighbor");
+
+            let neighbor_info = NeighborInfo {
+                index: neighbor_idx,
+                public_key: public_keys[neighbor_idx].clone(),
+                sub_merkle_root: sub_merkle_trees[neighbor_idx].root,
+                merkle_proof,
+                weight,
+            };
+
+            neighbors.push(neighbor_info);
+        }
+
+        // Create user view
+        let user_view = UserView {
+            secret_key: secret_keys[user_idx].clone(),
+            public_key: public_keys[user_idx].clone(),
+            neighbours_view: NeighboursView { neighbors },
+        };
+
+        users_view.push(user_view);
+    }
 
     GeneratedState {
         protocol_state,
-        secret_keys,
-        public_keys,
+        users_view,
         weight_matrix,
     }
 }
@@ -322,8 +393,7 @@ mod tests {
         let generated_state = generate_state(num_users, &mut rng);
 
         // Verify basic structure
-        assert_eq!(generated_state.secret_keys.len(), num_users);
-        assert_eq!(generated_state.public_keys.len(), num_users);
+        assert_eq!(generated_state.users_view.len(), num_users);
         assert_eq!(
             generated_state.protocol_state.sub_merkle_trees.len(),
             num_users
@@ -334,6 +404,63 @@ mod tests {
         println!("Generated state for {} users", num_users);
         println!("Merkle tree root: {:?}", merkle_tree.root);
         println!("Merkle tree depth: {}", merkle_tree.depth());
+
+        // Verify user views
+        for (user_idx, user_view) in generated_state.users_view.iter().enumerate() {
+            println!(
+                "\nUser {}: has {} neighbors",
+                user_idx,
+                user_view.neighbours_view.neighbors.len()
+            );
+
+            // Each user should have num_users-1 neighbors (all others)
+            assert_eq!(
+                user_view.neighbours_view.neighbors.len(),
+                num_users - 1,
+                "User {} should have {} neighbors",
+                user_idx,
+                num_users - 1
+            );
+
+            // Verify neighbor information is complete
+            for neighbor in &user_view.neighbours_view.neighbors {
+                assert!(neighbor.index < num_users);
+                assert_ne!(
+                    neighbor.index, user_idx,
+                    "User should not be their own neighbor"
+                );
+                assert!(neighbor.weight > 0);
+                assert_eq!(
+                    neighbor.merkle_proof.len(),
+                    merkle_tree.depth(),
+                    "Proof should have correct depth"
+                );
+
+                // Verify the merkle proof for this neighbor
+                let hasher = PoseidonHash::new();
+                let leaf = merkle_tree.leaves[neighbor.index];
+                let (pk_x, pk_y, m2_root) = leaf;
+
+                let mut current_hash = hasher.hash(&[pk_x, pk_y, m2_root]);
+                let mut current_index = neighbor.index;
+
+                for sibling_hash in &neighbor.merkle_proof {
+                    let is_left = current_index % 2 == 0;
+                    current_hash = if is_left {
+                        hasher.hash(&[current_hash, *sibling_hash])
+                    } else {
+                        hasher.hash(&[*sibling_hash, current_hash])
+                    };
+                    current_index /= 2;
+                }
+
+                assert_eq!(
+                    current_hash, merkle_tree.root,
+                    "Merkle proof should verify for neighbor {} of user {}",
+                    neighbor.index, user_idx
+                );
+            }
+        }
 
         // Test merkle proofs for several users
         for user_idx in [0, 3, 7] {
@@ -409,5 +536,89 @@ mod tests {
         }
 
         println!("\n✓ All Merkle proofs verified successfully!");
+    }
+
+    #[test]
+    fn test_neighbours_view() {
+        use crate::crypto::poseidon::PoseidonHash;
+
+        let mut rng = thread_rng();
+        let num_users = 5;
+
+        // Generate protocol state
+        let generated_state = generate_state(num_users, &mut rng);
+
+        println!("Testing NeighboursView for {} users", num_users);
+
+        // Test user 0's view of their neighbors
+        let user_0_view = &generated_state.users_view[0];
+
+        println!("\n=== User 0's View ===");
+        println!("Secret key: (hidden)");
+        println!("Public key x coordinate: {:?}", user_0_view.public_key.pk.x);
+        println!(
+            "Number of neighbors: {}",
+            user_0_view.neighbours_view.neighbors.len()
+        );
+
+        // Verify that user 0 knows about all other users
+        assert_eq!(user_0_view.neighbours_view.neighbors.len(), num_users - 1);
+
+        let merkle_tree = &generated_state.protocol_state.merkle_tree;
+        let hasher = PoseidonHash::new();
+
+        for (i, neighbor) in user_0_view.neighbours_view.neighbors.iter().enumerate() {
+            println!("\n  Neighbor {}: User {}", i, neighbor.index);
+            println!("    Weight: {}", neighbor.weight);
+            println!("    Sub-merkle root: {:?}", neighbor.sub_merkle_root);
+            println!("    Merkle proof length: {}", neighbor.merkle_proof.len());
+
+            // Verify that the neighbor's index is not user 0
+            assert_ne!(neighbor.index, 0);
+
+            // Verify the sub-merkle root matches the protocol state
+            assert_eq!(
+                neighbor.sub_merkle_root,
+                generated_state.protocol_state.sub_merkle_trees[neighbor.index].root
+            );
+
+            // Verify the merkle proof
+            let leaf = merkle_tree.leaves[neighbor.index];
+            let (pk_x, pk_y, m2_root) = leaf;
+
+            let mut current_hash = hasher.hash(&[pk_x, pk_y, m2_root]);
+            let mut current_index = neighbor.index;
+
+            for sibling_hash in &neighbor.merkle_proof {
+                let is_left = current_index % 2 == 0;
+                current_hash = if is_left {
+                    hasher.hash(&[current_hash, *sibling_hash])
+                } else {
+                    hasher.hash(&[*sibling_hash, current_hash])
+                };
+                current_index /= 2;
+            }
+
+            assert_eq!(
+                current_hash, merkle_tree.root,
+                "User 0's merkle proof for neighbor {} should verify",
+                neighbor.index
+            );
+        }
+
+        // Verify that weights sum to WEIGHT_SUM
+        let total_weight: u64 = user_0_view
+            .neighbours_view
+            .neighbors
+            .iter()
+            .map(|n| n.weight as u64)
+            .sum();
+        assert_eq!(
+            total_weight,
+            crate::WEIGHT_SUM,
+            "Total weights should sum to WEIGHT_SUM"
+        );
+
+        println!("\n✓ NeighboursView test passed!");
     }
 }
