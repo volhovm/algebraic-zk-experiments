@@ -21,12 +21,8 @@ fn test_basic_forward_protocol() {
 
     let mut rng = thread_rng();
 
-    // Step 1: Generate protocol state with multiple users
-    println!("Step 1: Generating protocol state for 5 users...");
+    // Step 1: Create public parameters
     let num_nodes = 5;
-    let generated_state = generate_state(num_nodes, &mut rng);
-
-    // Create public parameters
     let pp = PublicParams {
         num_nodes,
         max_out_degree: 10,
@@ -35,6 +31,10 @@ fn test_basic_forward_protocol() {
         groth16_params: vec![],
         generators: Generators::generate(&mut rng, 10, 10, 10),
     };
+
+    // Step 2: Generate protocol state with multiple users
+    println!("Step 1: Generating protocol state for 5 users...");
+    let generated_state = generate_state(&pp, num_nodes, &mut rng);
 
     for i in 0..num_nodes {
         println!(

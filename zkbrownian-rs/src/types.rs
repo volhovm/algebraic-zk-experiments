@@ -137,15 +137,78 @@ impl<'de> Deserialize<'de> for PrfOutput {
     }
 }
 
-/// Proof component (stub for now, will be expanded)
+/// Groth16 proof type alias
+pub type ProofGroth16 = crate::proving::groth16::Proof<crate::crypto::curve::PairingEngine>;
+
+// Serde implementations for ProofGroth16 using ark_serialize
+impl Serialize for ProofGroth16 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut bytes = Vec::new();
+        self.serialize_compressed(&mut bytes)
+            .map_err(|e| serde::ser::Error::custom(format!("Serialization error: {}", e)))?;
+        serializer.serialize_bytes(&bytes)
+    }
+}
+
+impl<'de> Deserialize<'de> for ProofGroth16 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        ProofGroth16::deserialize_compressed(&bytes[..])
+            .map_err(|e| DeError::custom(format!("Deserialization error: {}", e)))
+    }
+}
+
+/// Schnorr proof stub (generic over group type)
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct Schnorr<G: Send + Sync> {
+    /// Stub data for Schnorr proof
+    pub data: Vec<u8>,
+    /// Phantom data for group type
+    #[doc(hidden)]
+    pub _phantom: std::marker::PhantomData<G>,
+}
+
+impl<G: Send + Sync> Serialize for Schnorr<G> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.data.serialize(serializer)
+    }
+}
+
+impl<'de, G: Send + Sync> Deserialize<'de> for Schnorr<G> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let data = Vec::<u8>::deserialize(deserializer)?;
+        Ok(Schnorr {
+            data,
+            _phantom: std::marker::PhantomData,
+        })
+    }
+}
+
+/// Proof component
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize, Serialize, Deserialize)]
 pub struct Proof {
-    /// Groth16 proof elements
-    pub pi_1: Vec<u8>, // G1 proof
-    pub pi_2: Vec<u8>,    // G1 proof (weights)
-    pub pi_3: Vec<u8>,    // G1 proof
-    pub pi_4_g1: Vec<u8>, // Schnorr in G1
-    pub pi_4_g2: Vec<u8>, // Schnorr in G2
+    /// π_1: Sender membership proof (Groth16)
+    pub pi_1: ProofGroth16,
+    /// π_2: Weight subtree proof (Groth16)
+    pub pi_2: ProofGroth16,
+    /// π_3: Receiver membership proof (Groth16)
+    pub pi_3: ProofGroth16,
+    /// π_4_g1: Schnorr bridging proof in G1
+    pub pi_4_g1: Schnorr<G1>,
+    /// π_4_g2: Schnorr bridging proof in G3 (Grumpkin)
+    pub pi_4_g2: Schnorr<G3>,
 }
 
 /// A single hop in the message history

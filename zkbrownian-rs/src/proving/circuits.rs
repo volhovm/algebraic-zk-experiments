@@ -8,8 +8,26 @@
 //! - π_{4,G1}: Lightweight Schnorr bridging proof in G1
 //! - π_{4,G2}: Public key operations proof in G2
 
-use crate::types::{ProtocolResult, ScalarField, G3};
+use crate::types::{ProofGroth16, ProtocolResult, ScalarField, Schnorr, G1, G3};
 use ark_bls12_381::G1Projective;
+use ark_ec::CurveGroup;
+use ark_std::UniformRand;
+
+/// Create a mock Groth16 proof with random group elements
+///
+/// This generates a proof with random elements a, b, c for testing purposes.
+/// The proof structure is: (a: G1Affine, b: G2Affine, c: G1Affine)
+pub fn mock_groth16_proof() -> ProofGroth16 {
+    use crate::crypto::curve::PairingEngine;
+    use ark_ec::pairing::Pairing;
+    let mut rng = ark_std::test_rng();
+
+    ProofGroth16 {
+        a: <PairingEngine as Pairing>::G1::rand(&mut rng).into_affine(),
+        b: <PairingEngine as Pairing>::G2::rand(&mut rng).into_affine(),
+        c: <PairingEngine as Pairing>::G1::rand(&mut rng).into_affine(),
+    }
+}
 
 // =============================================================================
 // π_1: Sender Membership Proof
@@ -49,14 +67,14 @@ pub struct SenderMembershipWitness {
 /// * `witness` - Private inputs (pk_x, pk_y, md_{2,k_s}, r1, merkle_proof)
 ///
 /// # Returns
-/// Serialized Groth16 proof bytes
+/// Groth16 proof
 pub fn prove_sender_membership(
     _instance: &SenderMembershipInstance,
     _witness: &SenderMembershipWitness,
-) -> ProtocolResult<Vec<u8>> {
+) -> ProtocolResult<ProofGroth16> {
     // TODO: Actual Groth16 proof generation
-    // For now, return stub proof
-    Ok(vec![0u8; 32])
+    // For now, return mock proof with random elements
+    Ok(mock_groth16_proof())
 }
 
 // =============================================================================
@@ -97,14 +115,14 @@ pub struct ReceiverMembershipWitness {
 /// * `witness` - Private inputs (pk_r_x, pk_r_y, md_{2,k_r}, r2, merkle_proof)
 ///
 /// # Returns
-/// Serialized Groth16 proof bytes
+/// Groth16 proof
 pub fn prove_receiver_membership(
     _instance: &ReceiverMembershipInstance,
     _witness: &ReceiverMembershipWitness,
-) -> ProtocolResult<Vec<u8>> {
+) -> ProtocolResult<ProofGroth16> {
     // TODO: Actual Groth16 proof generation
-    // For now, return stub proof
-    Ok(vec![0u8; 32])
+    // For now, return mock proof with random elements
+    Ok(mock_groth16_proof())
 }
 
 // =============================================================================
@@ -172,14 +190,14 @@ pub struct WeightSubtreeWitness {
 /// * `witness` - Private inputs (all exponents and sub-merkle proofs)
 ///
 /// # Returns
-/// Serialized Groth16 proof bytes
+/// Groth16 proof
 pub fn prove_weight_subtree(
     _instance: &WeightSubtreeInstance,
     _witness: &WeightSubtreeWitness,
-) -> ProtocolResult<Vec<u8>> {
+) -> ProtocolResult<ProofGroth16> {
     // TODO: Actual Groth16 proof generation
-    // For now, return stub proof
-    Ok(vec![0u8; 32])
+    // For now, return mock proof with random elements
+    Ok(mock_groth16_proof())
 }
 
 // =============================================================================
@@ -274,14 +292,17 @@ pub struct SchnorrBridgingWitness {
 /// * `witness` - Private inputs (all exponents and coordinates)
 ///
 /// # Returns
-/// Serialized Groth16 proof bytes
+/// Schnorr proof in G1
 pub fn prove_schnorr_bridging(
     _instance: &SchnorrBridgingInstance,
     _witness: &SchnorrBridgingWitness,
-) -> ProtocolResult<Vec<u8>> {
-    // TODO: Actual Groth16 proof generation
+) -> ProtocolResult<Schnorr<G1>> {
+    // TODO: Actual Schnorr proof generation
     // For now, return stub proof
-    Ok(vec![0u8; 32])
+    Ok(Schnorr {
+        data: vec![0u8; 32],
+        _phantom: std::marker::PhantomData,
+    })
 }
 
 // =============================================================================
@@ -342,12 +363,15 @@ pub struct PublicKeyOperationsWitness {
 /// * `witness` - Private inputs (sk, d, exponents)
 ///
 /// # Returns
-/// Serialized Groth16 proof bytes
+/// Schnorr proof in G3 (Grumpkin)
 pub fn prove_public_key_operations(
     _instance: &PublicKeyOperationsInstance,
     _witness: &PublicKeyOperationsWitness,
-) -> ProtocolResult<Vec<u8>> {
-    // TODO: Actual Groth16 proof generation
+) -> ProtocolResult<Schnorr<G3>> {
+    // TODO: Actual Schnorr proof generation
     // For now, return stub proof
-    Ok(vec![0u8; 32])
+    Ok(Schnorr {
+        data: vec![0u8; 32],
+        _phantom: std::marker::PhantomData,
+    })
 }

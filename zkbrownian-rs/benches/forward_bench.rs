@@ -37,10 +37,6 @@ fn bench_spawn(c: &mut Criterion) {
 fn bench_forward(c: &mut Criterion) {
     let mut rng = thread_rng();
 
-    // Setup: generate protocol state
-    let generated_state = generate_state(2, &mut rng);
-    let user_0_view = &generated_state.users_view[0];
-
     // Create public parameters
     let pp = PublicParams {
         num_nodes: 2,
@@ -50,6 +46,10 @@ fn bench_forward(c: &mut Criterion) {
         groth16_params: vec![],
         generators: Generators::generate(&mut rng, 10, 10, 10),
     };
+
+    // Setup: generate protocol state
+    let generated_state = generate_state(&pp, 2, &mut rng);
+    let user_0_view = &generated_state.users_view[0];
 
     let message = spawn(
         &user_0_view.secret_key,
