@@ -285,14 +285,74 @@ pub struct PublicParams {
     pub num_nodes: usize,
     /// Maximum out-degree
     pub max_out_degree: usize,
-    /// Generators for G1
-    pub g1_generators: Vec<G1>,
-    /// Generators for G3 (Grumpkin curve, used for public keys)
-    pub g3_generators: Vec<G3>,
-    /// Groth16 proving/verifying keys (stub)
-    pub groth16_params: Vec<u8>,
     /// Cryptographic generators for the protocol
     pub generators: crate::crypto::generators::Generators,
+    /// Groth16 proving key for sender membership proof (π_1)
+    pub pk_sender_membership: crate::proving::groth16::ProvingKey<PairingEngine>,
+    /// Groth16 proving key for receiver membership proof (π_3)
+    pub pk_receiver_membership: crate::proving::groth16::ProvingKey<PairingEngine>,
+    /// Groth16 proving key for weight subtree proof (π_2)
+    pub pk_weight_subtree: crate::proving::groth16::ProvingKey<PairingEngine>,
+}
+
+impl PublicParams {
+    /// Generate public parameters with Groth16 setup
+    ///
+    /// # Arguments
+    /// * `num_nodes` - Number of nodes in the network
+    /// * `max_out_degree` - Maximum out-degree for routing
+    /// * `rng` - Random number generator
+    ///
+    /// # Returns
+    /// Initialized PublicParams with proving keys
+    pub fn generate<R: rand::Rng + rand::CryptoRng>(
+        num_nodes: usize,
+        max_out_degree: usize,
+        rng: &mut R,
+    ) -> ProtocolResult<Self> {
+        use crate::proving::circuits::{
+            ReceiverMembershipCircuit, SenderMembershipCircuit, WeightSubtreeCircuit,
+        };
+        use crate::proving::groth16::Groth16;
+        use ark_crypto_primitives::snark::SNARK;
+
+        // Generate cryptographic generators
+        let generators = crate::crypto::generators::Generators::generate(rng, 10, 10, 10);
+
+        // Generate proving keys using circuit_specific_setup
+        // For sender membership circuit (π_1)
+        let sender_circuit = SenderMembershipCircuit::<ScalarField> {
+            _phantom: std::marker::PhantomData,
+        };
+        let (pk_sender_membership, _vk) =
+            Groth16::<PairingEngine>::circuit_specific_setup(sender_circuit, rng)
+                .map_err(|e| ProtocolError::CryptoError(format!("Setup failed: {:?}", e)))?;
+
+        // For receiver membership circuit (π_3)
+        let receiver_circuit = ReceiverMembershipCircuit::<ScalarField> {
+            _phantom: std::marker::PhantomData,
+        };
+        let (pk_receiver_membership, _vk) =
+            Groth16::<PairingEngine>::circuit_specific_setup(receiver_circuit, rng)
+                .map_err(|e| ProtocolError::CryptoError(format!("Setup failed: {:?}", e)))?;
+
+        // For weight subtree circuit (π_2)
+        let weight_circuit = WeightSubtreeCircuit::<ScalarField> {
+            _phantom: std::marker::PhantomData,
+        };
+        let (pk_weight_subtree, _vk) =
+            Groth16::<PairingEngine>::circuit_specific_setup(weight_circuit, rng)
+                .map_err(|e| ProtocolError::CryptoError(format!("Setup failed: {:?}", e)))?;
+
+        Ok(PublicParams {
+            num_nodes,
+            max_out_degree,
+            generators,
+            pk_sender_membership,
+            pk_receiver_membership,
+            pk_weight_subtree,
+        })
+    }
 }
 
 /// Sub-Merkle tree (M2) for a single user's weight distribution

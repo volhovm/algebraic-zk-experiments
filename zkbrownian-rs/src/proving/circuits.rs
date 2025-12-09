@@ -375,3 +375,46 @@ pub fn prove_public_key_operations(
         _phantom: std::marker::PhantomData,
     })
 }
+
+// =============================================================================
+// Dummy Circuits for Groth16 Setup
+// =============================================================================
+
+use ark_ff::Field;
+use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
+
+/// Dummy circuit for sender membership proof (π_1)
+#[derive(Clone)]
+pub struct SenderMembershipCircuit<F: Field> {
+    pub _phantom: std::marker::PhantomData<F>,
+}
+
+impl<F: Field> ConstraintSynthesizer<F> for SenderMembershipCircuit<F> {
+    fn generate_constraints(self, _cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+        Ok(())
+    }
+}
+
+/// Dummy circuit for receiver membership proof (π_3)
+#[derive(Clone)]
+pub struct ReceiverMembershipCircuit<F: Field> {
+    pub _phantom: std::marker::PhantomData<F>,
+}
+
+impl<F: Field> ConstraintSynthesizer<F> for ReceiverMembershipCircuit<F> {
+    fn generate_constraints(self, _cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+        Ok(())
+    }
+}
+
+/// Dummy circuit for weight subtree proof (π_2)
+#[derive(Clone)]
+pub struct WeightSubtreeCircuit<F: Field> {
+    pub _phantom: std::marker::PhantomData<F>,
+}
+
+impl<F: Field> ConstraintSynthesizer<F> for WeightSubtreeCircuit<F> {
+    fn generate_constraints(self, _cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+        Ok(())
+    }
+}

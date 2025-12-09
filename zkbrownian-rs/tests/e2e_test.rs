@@ -7,7 +7,6 @@
 //! 4. Verifying the message
 
 use rand::thread_rng;
-use zkbrownian::crypto::generators::Generators;
 use zkbrownian::protocol::{
     forward, generate_state, spawn, verify, BulletinBoard, BulletinBoardEntry,
     InMemoryBulletinBoard,
@@ -23,14 +22,7 @@ fn test_basic_forward_protocol() {
 
     // Step 1: Create public parameters
     let num_nodes = 5;
-    let pp = PublicParams {
-        num_nodes,
-        max_out_degree: 10,
-        g1_generators: vec![],
-        g3_generators: vec![],
-        groth16_params: vec![],
-        generators: Generators::generate(&mut rng, 10, 10, 10),
-    };
+    let pp = PublicParams::generate(num_nodes, 10, &mut rng).expect("Failed to generate params");
 
     // Step 2: Generate protocol state with multiple users
     println!("Step 1: Generating protocol state for 5 users...");

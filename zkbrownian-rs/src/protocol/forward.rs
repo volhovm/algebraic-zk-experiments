@@ -781,20 +781,12 @@ fn generate_forward_proof(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::generators::Generators;
     use crate::protocol::spawn::spawn;
     use rand::thread_rng;
 
     // Helper function to create public parameters for tests
-    fn create_test_public_params<R: Rng>(rng: &mut R) -> PublicParams {
-        PublicParams {
-            num_nodes: 10,
-            max_out_degree: 10,
-            g1_generators: vec![],
-            g3_generators: vec![],
-            groth16_params: vec![],
-            generators: Generators::generate(rng, 10, 10, 10),
-        }
+    fn create_test_public_params<R: Rng + rand::CryptoRng>(rng: &mut R) -> PublicParams {
+        PublicParams::generate(10, 10, rng).expect("Failed to generate params")
     }
 
     #[test]
