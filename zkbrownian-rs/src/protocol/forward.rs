@@ -161,6 +161,7 @@ fn generate_precompute(
     // Generate π_3 and π_2 proofs for each neighbor
     let mut pi_3_receivers = Vec::new();
     let mut pi_2_weights = Vec::new();
+    let mut cumulative_weight = 0u64;
 
     for neighbor in &neighbours_view.neighbors {
         // Convert receiver's public key to scalar field
@@ -172,8 +173,8 @@ fn generate_precompute(
         );
         let md_2_k_r = neighbor.sub_merkle_root;
 
-        // Generate random blinding factor for receiver
-        let r2 = ScalarField::rand(&mut rand::thread_rng());
+        // Generate random blinding factor for receiver, fixed zero
+        let r2 = ScalarField::from(0u32);
 
         // Create commitment C2 for receiver
         let c2 = (g1_base_proj * pk_r_x_scalar)
@@ -197,9 +198,12 @@ fn generate_precompute(
         pi_3_receivers.push(pi_3);
 
         // Generate π_2: Weight subtree proof
-        // For v1 and v2, we use cumulative weights (simplified for now)
-        let v1 = 0u64; // TODO: Compute actual cumulative weight
-        let v2 = neighbor.weight as u64; // TODO: Compute actual cumulative weight
+        // v1 is the cumulative weight up to (but not including) this neighbor
+        // v2 is the cumulative weight including this neighbor
+        let v1 = cumulative_weight;
+        let v2 = cumulative_weight + neighbor.weight as u64;
+        cumulative_weight = v2; // Update cumulative weight for next iteration
+
         let r_v1 = ScalarField::rand(&mut rand::thread_rng());
         let r_v2 = ScalarField::rand(&mut rand::thread_rng());
 
