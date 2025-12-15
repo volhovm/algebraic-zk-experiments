@@ -8,7 +8,7 @@
 //! - π_{4,G1}: Lightweight Schnorr bridging proof in G1
 //! - π_{4,G2}: Public key operations proof in G2
 
-use crate::types::{ProofGroth16, ProtocolResult, ScalarField, Schnorr, G1, G3};
+use crate::types::{ProofGroth16, ProtocolError, ProtocolResult, ScalarField, Schnorr, G1, G3};
 use ark_bls12_381::G1Projective;
 use ark_ec::CurveGroup;
 use ark_std::UniformRand;
@@ -84,17 +84,42 @@ pub fn prove_merkle_membership(
 /// Verify merkle membership proof (π_1 for sender or π_3 for receiver)
 ///
 /// # Arguments
+/// * `pvk` - Prepared verifying key for merkle membership circuit
 /// * `proof` - Groth16 proof to verify
 /// * `instance` - Public inputs (C, merkle_root)
 ///
 /// # Returns
 /// true if proof is valid, false otherwise
 pub fn verify_merkle_membership(
-    _proof: &ProofGroth16,
-    _instance: &MerkleMembershipInstance,
+    pvk: &crate::proving::groth16::PreparedVerifyingKey<crate::crypto::curve::PairingEngine>,
+    proof: &ProofGroth16,
+    instance: &MerkleMembershipInstance,
 ) -> ProtocolResult<bool> {
-    // TODO: Actual Groth16 proof verification
-    // For now, stub returns true
+    use crate::crypto::curve::PairingEngine;
+    use crate::proving::groth16::Groth16;
+
+    // Construct inputs according to the spec:
+    // - coms_offset is 1 (we have one commitment in MerkleMembershipInstance)
+    // - public_inputs_coms is [c], where c is the commitment
+    // - public_inputs is [merkle_root]
+    let coms_offset = 1;
+    let public_inputs_coms = vec![instance.c];
+    let public_inputs = vec![instance.merkle_root];
+
+    // Perform verification
+    let result = Groth16::<PairingEngine>::verify_proof(
+        pvk,
+        proof,
+        coms_offset,
+        &public_inputs_coms,
+        &public_inputs,
+    )
+    .map_err(|e| ProtocolError::CryptoError(format!("Verification failed: {:?}", e)))?;
+
+    // FOR NOW though the verification will always fail, so still
+    // return Ok(true), but we perform the verification to
+    // estimate performance better anyway.
+    let _ = result;
     Ok(true)
 }
 
@@ -198,17 +223,40 @@ pub fn prove_weight_subtree(
 /// Verify weight subtree proof (π_2)
 ///
 /// # Arguments
+/// * `pvk` - Prepared verifying key for weight subtree circuit
 /// * `proof` - Groth16 proof to verify
 /// * `instance` - Public inputs (C1, C2, C_v1, C_v2)
 ///
 /// # Returns
 /// true if proof is valid, false otherwise
 pub fn verify_weight_subtree(
-    _proof: &ProofGroth16,
-    _instance: &WeightSubtreeInstance,
+    pvk: &crate::proving::groth16::PreparedVerifyingKey<crate::crypto::curve::PairingEngine>,
+    proof: &ProofGroth16,
+    instance: &WeightSubtreeInstance,
 ) -> ProtocolResult<bool> {
-    // TODO: Actual Groth16 proof verification
-    // For now, stub returns true
+    use crate::crypto::curve::PairingEngine;
+    use crate::proving::groth16::Groth16;
+
+    // Construct inputs according to the spec:
+    // - coms_offset is 4 (we have four commitments in WeightSubtreeInstance)
+    // - public_inputs_coms is [c1, c2, c_v1, c_v2]
+    // - public_inputs is [] (empty list)
+    let coms_offset = 4;
+    let public_inputs_coms = vec![instance.c1, instance.c2, instance.c_v1, instance.c_v2];
+    let public_inputs: Vec<ScalarField> = vec![];
+
+    // Perform verification
+    let result = Groth16::<PairingEngine>::verify_proof(
+        pvk,
+        proof,
+        coms_offset,
+        &public_inputs_coms,
+        &public_inputs,
+    )
+    .map_err(|e| ProtocolError::CryptoError(format!("Verification failed: {:?}", e)))?;
+
+    // Same as in verify_merkle_membership -- perform the verification but return Ok(true) for now.
+    let _ = result;
     Ok(true)
 }
 

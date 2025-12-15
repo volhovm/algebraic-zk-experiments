@@ -31,20 +31,15 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         let mut g_ic = pvk.vk.gamma_abc_g1[0].into_group();
 
         if coms_offset > 0 {
-            println!("Adding commitment to prepare_inputs");
             for com in public_input_coms.iter() {
                 g_ic.add_assign(com);
             }
         }
 
-        println!("Len of gamma_abc_g1: {}", pvk.vk.gamma_abc_g1.len());
-        println!("Len of public inputs: {}", public_inputs.len());
-
         for (i, b) in public_inputs
             .iter()
             .zip(pvk.vk.gamma_abc_g1.iter().skip(1 + coms_offset))
         {
-            println!("prepare_inputs adding public inputs");
             g_ic.add_assign(&b.mul_bigint(i.into_bigint()));
         }
 

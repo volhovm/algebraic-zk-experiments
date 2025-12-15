@@ -132,6 +132,7 @@ fn test_basic_forward_protocol() {
         current_message.hop_count(),
         &weight_commitment,
         &all_public_keys,
+        &pp,
     )
     .expect("Verification error");
 
@@ -160,8 +161,13 @@ fn test_basic_forward_protocol() {
         .collect();
 
     let verification_start = Instant::now();
-    let all_valid = verify_batch(&messages_to_verify, &weight_commitment, &all_public_keys)
-        .expect("Batch verification error");
+    let all_valid = verify_batch(
+        &messages_to_verify,
+        &weight_commitment,
+        &all_public_keys,
+        &pp,
+    )
+    .expect("Batch verification error");
     let verification_elapsed = verification_start.elapsed();
 
     println!(
@@ -284,9 +290,13 @@ fn test_full_protocol() {
             // Step 1: User receives messages - batch verify them
             if !messages_for_user.is_empty() {
                 let verify_start = Instant::now();
-                let all_valid =
-                    verify_batch(&messages_for_user, &weight_commitment, &all_public_keys)
-                        .expect("Batch verification error");
+                let all_valid = verify_batch(
+                    &messages_for_user,
+                    &weight_commitment,
+                    &all_public_keys,
+                    &pp,
+                )
+                .expect("Batch verification error");
                 let verify_elapsed = verify_start.elapsed();
 
                 assert!(

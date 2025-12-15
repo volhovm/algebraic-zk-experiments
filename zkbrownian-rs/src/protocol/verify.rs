@@ -14,6 +14,7 @@ use crate::types::*;
 /// * `messages` - Slice of messages to verify
 /// * `weight_commitment` - Committed weight matrix
 /// * `all_public_keys` - List of all node public keys
+/// * `params` - Public parameters for the system
 ///
 /// # Returns
 /// true if all messages are valid, false if any message is invalid
@@ -21,11 +22,18 @@ pub fn verify_batch(
     messages: &[Message],
     weight_commitment: &WeightCommitment,
     all_public_keys: &[PublicKey],
+    params: &PublicParams,
 ) -> ProtocolResult<bool> {
     // TODO Implement proper batch verification
     for message in messages {
         let hop_count = message.hop_count();
-        let is_valid = verify(message, hop_count, weight_commitment, all_public_keys)?;
+        let is_valid = verify(
+            message,
+            hop_count,
+            weight_commitment,
+            all_public_keys,
+            params,
+        )?;
         if !is_valid {
             return Ok(false);
         }
@@ -49,6 +57,7 @@ pub fn verify_batch(
 /// * `hop_count` - Expected number of hops h
 /// * `weight_commitment` - Committed weight matrix C
 /// * `all_public_keys` - List of all node public keys P
+/// * `params` - Public parameters for the system
 ///
 /// # Returns
 /// true if message is valid, false otherwise
@@ -57,6 +66,7 @@ pub fn verify(
     hop_count: usize,
     _weight_commitment: &WeightCommitment,
     _all_public_keys: &[PublicKey],
+    params: &PublicParams,
 ) -> ProtocolResult<bool> {
     // Check hop count matches
     if message.hop_count() != hop_count {
@@ -70,7 +80,7 @@ pub fn verify(
 
     // Step 2: Verify each hop proof π_i
     for (i, hop) in message.hops.iter().enumerate() {
-        if !verify_hop_proof(message, i, hop)? {
+        if !verify_hop_proof(message, i, hop, params)? {
             return Ok(false);
         }
     }
@@ -92,10 +102,20 @@ fn verify_spawn_proof(_message: &Message) -> ProtocolResult<bool> {
 /// 2. Correct selection of next hop according to weight matrix
 /// 3. Correct derivation of ppk_i
 /// 4. Correct derivation of PRF output φ_i
-fn verify_hop_proof(message: &Message, hop_index: usize, hop: &Hop) -> ProtocolResult<bool> {
+fn verify_hop_proof(
+    message: &Message,
+    hop_index: usize,
+    hop: &Hop,
+    params: &PublicParams,
+) -> ProtocolResult<bool> {
     use crate::proving::circuits::*;
+    use crate::proving::groth16::prepare_verifying_key;
     #[allow(unused_imports)]
     use ark_ec::CurveGroup;
+
+    // Prepare the verifying keys
+    let pvk_merkle = prepare_verifying_key(&params.pk_merkle_membership.vk);
+    let pvk_weight = prepare_verifying_key(&params.pk_weight_subtree.vk);
 
     // Get the merkle root from the weight commitment
     // TODO: Extract actual merkle root from weight_commitment once structure is finalized
@@ -108,7 +128,7 @@ fn verify_hop_proof(message: &Message, hop_index: usize, hop: &Hop) -> ProtocolR
     };
 
     // Verify π_1
-    if !verify_merkle_membership(&hop.pi.pi_1, &pi_1_instance)? {
+    if !verify_merkle_membership(&pvk_merkle, &hop.pi.pi_1, &pi_1_instance)? {
         return Ok(false);
     }
 
@@ -121,7 +141,7 @@ fn verify_hop_proof(message: &Message, hop_index: usize, hop: &Hop) -> ProtocolR
     };
 
     // Verify π_2
-    if !verify_weight_subtree(&hop.pi.pi_2, &pi_2_instance)? {
+    if !verify_weight_subtree(&pvk_weight, &hop.pi.pi_2, &pi_2_instance)? {
         return Ok(false);
     }
 
@@ -132,7 +152,7 @@ fn verify_hop_proof(message: &Message, hop_index: usize, hop: &Hop) -> ProtocolR
     };
 
     // Verify π_3
-    if !verify_merkle_membership(&hop.pi.pi_3, &pi_3_instance)? {
+    if !verify_merkle_membership(&pvk_merkle, &hop.pi.pi_3, &pi_3_instance)? {
         return Ok(false);
     }
 
@@ -244,8 +264,9 @@ mod tests {
             commitment: vec![],
             metadata: vec![],
         };
+        let params = PublicParams::generate(10, 10, &mut rng).unwrap();
 
-        let result = verify(&message, 0, &weight_commitment, &all_pks).unwrap();
+        let result = verify(&message, 0, &weight_commitment, &all_pks, &params).unwrap();
         assert!(result);
     }
 
@@ -261,9 +282,10 @@ mod tests {
             commitment: vec![],
             metadata: vec![],
         };
+        let params = PublicParams::generate(10, 10, &mut rng).unwrap();
 
         // Verify with wrong hop count
-        let result = verify(&message, 5, &weight_commitment, &all_pks).unwrap();
+        let result = verify(&message, 5, &weight_commitment, &all_pks, &params).unwrap();
         assert!(!result);
     }
 }
