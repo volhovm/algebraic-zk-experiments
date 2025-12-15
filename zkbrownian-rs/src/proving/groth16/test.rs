@@ -397,8 +397,228 @@ where
     );
 }
 
+/// Test batch verification with multiple valid proofs
+fn test_batch_verify_valid<E>()
+where
+    E: Pairing,
+{
+    let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
+
+    // Setup circuit
+    let (pk, vk) = Groth16::<E>::setup(MySillyCircuit { a: None, b: None }, &mut rng).unwrap();
+    let pvk = prepare_verifying_key::<E>(&vk);
+
+    // Generate multiple valid proofs
+    let num_proofs = 5;
+    let mut proofs_and_inputs = Vec::new();
+
+    for _ in 0..num_proofs {
+        let a = E::ScalarField::rand(&mut rng);
+        let b = E::ScalarField::rand(&mut rng);
+        let mut c = a;
+        c *= b;
+
+        let proof = Groth16::<E>::prove(
+            &pk,
+            MySillyCircuit {
+                a: Some(a),
+                b: Some(b),
+            },
+            &mut rng,
+        )
+        .unwrap();
+
+        // First verify individually
+        assert!(
+            Groth16::<E>::verify_with_processed_vk(&pvk, &[c], &proof).unwrap(),
+            "Individual proof should verify"
+        );
+
+        // Prepare inputs for batch verification
+        let prepared_input = Groth16::<E>::prepare_inputs(&pvk, 0, &[], &[c]).unwrap();
+        proofs_and_inputs.push((proof, prepared_input));
+    }
+
+    // Batch verify all proofs
+    let batch_result =
+        Groth16::<E>::batch_verify_proofs_with_prepared_inputs(&pvk, &proofs_and_inputs).unwrap();
+    assert!(
+        batch_result,
+        "Batch verification should succeed for all valid proofs"
+    );
+}
+
+/// Test batch verification with a single proof (edge case)
+fn test_batch_verify_single<E>()
+where
+    E: Pairing,
+{
+    let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
+
+    let (pk, vk) = Groth16::<E>::setup(MySillyCircuit { a: None, b: None }, &mut rng).unwrap();
+    let pvk = prepare_verifying_key::<E>(&vk);
+
+    let a = E::ScalarField::rand(&mut rng);
+    let b = E::ScalarField::rand(&mut rng);
+    let mut c = a;
+    c *= b;
+
+    let proof = Groth16::<E>::prove(
+        &pk,
+        MySillyCircuit {
+            a: Some(a),
+            b: Some(b),
+        },
+        &mut rng,
+    )
+    .unwrap();
+
+    // Verify individually first
+    assert!(Groth16::<E>::verify_with_processed_vk(&pvk, &[c], &proof).unwrap());
+
+    // Batch verify with single proof
+    let prepared_input = Groth16::<E>::prepare_inputs(&pvk, 0, &[], &[c]).unwrap();
+    let proofs_and_inputs = vec![(proof, prepared_input)];
+
+    let batch_result =
+        Groth16::<E>::batch_verify_proofs_with_prepared_inputs(&pvk, &proofs_and_inputs).unwrap();
+    assert!(
+        batch_result,
+        "Batch verification should work for single proof"
+    );
+}
+
+/// Test batch verification with empty input (edge case)
+fn test_batch_verify_empty<E>()
+where
+    E: Pairing,
+{
+    let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
+
+    let (_pk, vk) = Groth16::<E>::setup(MySillyCircuit { a: None, b: None }, &mut rng).unwrap();
+    let pvk = prepare_verifying_key::<E>(&vk);
+
+    // Batch verify with empty set
+    let proofs_and_inputs = vec![];
+    let batch_result =
+        Groth16::<E>::batch_verify_proofs_with_prepared_inputs(&pvk, &proofs_and_inputs).unwrap();
+    assert!(
+        batch_result,
+        "Batch verification should succeed for empty input"
+    );
+}
+
+/// Test that batch verification fails when one proof is invalid
+fn test_batch_verify_one_invalid<E>()
+where
+    E: Pairing,
+{
+    let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
+
+    let (pk, vk) = Groth16::<E>::setup(MySillyCircuit { a: None, b: None }, &mut rng).unwrap();
+    let pvk = prepare_verifying_key::<E>(&vk);
+
+    let mut proofs_and_inputs = Vec::new();
+
+    // Add 3 valid proofs
+    for _ in 0..3 {
+        let a = E::ScalarField::rand(&mut rng);
+        let b = E::ScalarField::rand(&mut rng);
+        let mut c = a;
+        c *= b;
+
+        let proof = Groth16::<E>::prove(
+            &pk,
+            MySillyCircuit {
+                a: Some(a),
+                b: Some(b),
+            },
+            &mut rng,
+        )
+        .unwrap();
+
+        let prepared_input = Groth16::<E>::prepare_inputs(&pvk, 0, &[], &[c]).unwrap();
+        proofs_and_inputs.push((proof, prepared_input));
+    }
+
+    // Add 1 invalid proof (proof with wrong public input)
+    let a = E::ScalarField::rand(&mut rng);
+    let b = E::ScalarField::rand(&mut rng);
+    let mut c = a;
+    c *= b;
+
+    let proof = Groth16::<E>::prove(
+        &pk,
+        MySillyCircuit {
+            a: Some(a),
+            b: Some(b),
+        },
+        &mut rng,
+    )
+    .unwrap();
+
+    // Use wrong public input
+    let wrong_c = E::ScalarField::rand(&mut rng);
+    let prepared_input = Groth16::<E>::prepare_inputs(&pvk, 0, &[], &[wrong_c]).unwrap();
+    proofs_and_inputs.push((proof, prepared_input));
+
+    // Batch verification should fail
+    let batch_result =
+        Groth16::<E>::batch_verify_proofs_with_prepared_inputs(&pvk, &proofs_and_inputs).unwrap();
+    assert!(
+        !batch_result,
+        "Batch verification should fail when one proof is invalid"
+    );
+}
+
+/// Test batch verification with many proofs to ensure scalability
+fn test_batch_verify_many<E>()
+where
+    E: Pairing,
+{
+    let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
+
+    let (pk, vk) = Groth16::<E>::setup(MySillyCircuit { a: None, b: None }, &mut rng).unwrap();
+    let pvk = prepare_verifying_key::<E>(&vk);
+
+    // Generate many valid proofs (20 for thorough testing)
+    let num_proofs = 20;
+    let mut proofs_and_inputs = Vec::new();
+
+    for _ in 0..num_proofs {
+        let a = E::ScalarField::rand(&mut rng);
+        let b = E::ScalarField::rand(&mut rng);
+        let mut c = a;
+        c *= b;
+
+        let proof = Groth16::<E>::prove(
+            &pk,
+            MySillyCircuit {
+                a: Some(a),
+                b: Some(b),
+            },
+            &mut rng,
+        )
+        .unwrap();
+
+        let prepared_input = Groth16::<E>::prepare_inputs(&pvk, 0, &[], &[c]).unwrap();
+        proofs_and_inputs.push((proof, prepared_input));
+    }
+
+    // Batch verify all proofs
+    let batch_result =
+        Groth16::<E>::batch_verify_proofs_with_prepared_inputs(&pvk, &proofs_and_inputs).unwrap();
+    assert!(
+        batch_result,
+        "Batch verification should succeed for many valid proofs"
+    );
+}
+
 mod bls12_377 {
-    use super::{test_prove_and_verify, test_rerandomize};
+    use super::{
+        test_batch_verify_empty, test_batch_verify_many, test_batch_verify_one_invalid,
+        test_batch_verify_single, test_batch_verify_valid, test_prove_and_verify, test_rerandomize,
+    };
     use ark_bls12_377::Bls12_377;
 
     #[test]
@@ -410,10 +630,38 @@ mod bls12_377 {
     fn rerandomize() {
         test_rerandomize::<Bls12_377>();
     }
+
+    #[test]
+    fn batch_verify_valid() {
+        test_batch_verify_valid::<Bls12_377>();
+    }
+
+    #[test]
+    fn batch_verify_single() {
+        test_batch_verify_single::<Bls12_377>();
+    }
+
+    #[test]
+    fn batch_verify_empty() {
+        test_batch_verify_empty::<Bls12_377>();
+    }
+
+    #[test]
+    fn batch_verify_one_invalid() {
+        test_batch_verify_one_invalid::<Bls12_377>();
+    }
+
+    #[test]
+    fn batch_verify_many() {
+        test_batch_verify_many::<Bls12_377>();
+    }
 }
 
 mod bw6_761 {
-    use super::{test_prove_and_verify, test_rerandomize};
+    use super::{
+        test_batch_verify_empty, test_batch_verify_one_invalid, test_batch_verify_single,
+        test_batch_verify_valid, test_prove_and_verify, test_rerandomize,
+    };
 
     use ark_bw6_761::BW6_761;
 
@@ -426,10 +674,34 @@ mod bw6_761 {
     fn rerandomize() {
         test_rerandomize::<BW6_761>();
     }
+
+    #[test]
+    fn batch_verify_valid() {
+        test_batch_verify_valid::<BW6_761>();
+    }
+
+    #[test]
+    fn batch_verify_single() {
+        test_batch_verify_single::<BW6_761>();
+    }
+
+    #[test]
+    fn batch_verify_empty() {
+        test_batch_verify_empty::<BW6_761>();
+    }
+
+    #[test]
+    fn batch_verify_one_invalid() {
+        test_batch_verify_one_invalid::<BW6_761>();
+    }
 }
 
 mod bn_254 {
-    use super::{test_link16, test_link16_extra, test_prove_and_verify};
+    use super::{
+        test_batch_verify_empty, test_batch_verify_many, test_batch_verify_one_invalid,
+        test_batch_verify_single, test_batch_verify_valid, test_link16, test_link16_extra,
+        test_prove_and_verify,
+    };
     use ark_bn254::Bn254;
 
     #[test]
@@ -441,5 +713,30 @@ mod bn_254 {
     fn link16() {
         test_link16::<Bn254>();
         test_link16_extra::<Bn254>();
+    }
+
+    #[test]
+    fn batch_verify_valid() {
+        test_batch_verify_valid::<Bn254>();
+    }
+
+    #[test]
+    fn batch_verify_single() {
+        test_batch_verify_single::<Bn254>();
+    }
+
+    #[test]
+    fn batch_verify_empty() {
+        test_batch_verify_empty::<Bn254>();
+    }
+
+    #[test]
+    fn batch_verify_one_invalid() {
+        test_batch_verify_one_invalid::<Bn254>();
+    }
+
+    #[test]
+    fn batch_verify_many() {
+        test_batch_verify_many::<Bn254>();
     }
 }

@@ -1,5 +1,5 @@
-use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
-use ark_ff::PrimeField;
+use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup, PrimeGroup};
+use ark_ff::{Field, One, PrimeField, UniformRand, Zero};
 
 use crate::proving::groth16::{r1cs_to_qap::R1CSToQAP, Groth16};
 
@@ -85,5 +85,95 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         let prepared_inputs =
             Self::prepare_inputs(pvk, coms_offset, public_inputs_coms, public_inputs)?;
         Self::verify_proof_with_prepared_inputs(pvk, proof, &prepared_inputs)
+    }
+
+    /// Batch verify multiple Groth16 proofs against the same prepared verification key.
+    ///
+    /// This uses random linear combination to batch multiple pairing checks into a single one.
+    /// Given proofs π_1, ..., π_n, we sample random coefficients α_1, ..., α_n and verify:
+    /// e(∑ αᵢ·Aᵢ, ∑ αᵢ·Bᵢ) = e(α·g₁, β·g₂) · e(∑ αᵢ·prepared_inputsᵢ, -γ·g₂) · e(∑ αᵢ·Cᵢ, -δ·g₂)
+    ///
+    /// # Arguments
+    /// * `pvk` - Prepared verification key (same for all proofs)
+    /// * `proofs_and_inputs` - Vec of (proof, prepared_inputs) pairs
+    ///
+    /// # Returns
+    /// `Ok(true)` if all proofs are valid, `Ok(false)` otherwise
+    pub fn batch_verify_proofs_with_prepared_inputs(
+        pvk: &PreparedVerifyingKey<E>,
+        proofs_and_inputs: &[(Proof<E>, E::G1)],
+    ) -> R1CSResult<bool> {
+        use ark_std::rand::thread_rng;
+
+        if proofs_and_inputs.is_empty() {
+            return Ok(true);
+        }
+
+        // For single proof, use regular verification
+        if proofs_and_inputs.len() == 1 {
+            return Self::verify_proof_with_prepared_inputs(
+                pvk,
+                &proofs_and_inputs[0].0,
+                &proofs_and_inputs[0].1,
+            );
+        }
+
+        let mut rng = thread_rng();
+        let mut random_coeffs = Vec::with_capacity(proofs_and_inputs.len());
+        for _ in 0..proofs_and_inputs.len() {
+            random_coeffs.push(E::ScalarField::rand(&mut rng));
+        }
+
+        // For Groth16 batch verification, we verify: ∏ e(Aᵢ, Bᵢ)^rᵢ = ∏ [e(α, β) · e(inputsᵢ, γ) · e(Cᵢ, δ)]^rᵢ
+        // This becomes: ∏ e(Aᵢ, Bᵢ)^rᵢ = e(α, β)^(∑ rᵢ) · ∏ e(inputsᵢ, γ)^rᵢ · ∏ e(Cᵢ, δ)^rᵢ
+        // We compute this by scaling each proof's G1 elements by rᵢ and doing the pairing
+
+        // Compute ∑ rᵢ for the alpha_beta term
+        let sum_coeffs = random_coeffs
+            .iter()
+            .fold(E::ScalarField::zero(), |acc, r| acc + r);
+
+        // Compute individual miller loop products
+        let mut ml_result = E::TargetField::one();
+
+        for ((proof, prepared_input), coeff) in proofs_and_inputs.iter().zip(random_coeffs.iter()) {
+            // Scale the proof elements by the random coefficient
+            let scaled_a = proof
+                .a
+                .into_group()
+                .mul_bigint(coeff.into_bigint())
+                .into_affine();
+            let scaled_c = proof
+                .c
+                .into_group()
+                .mul_bigint(coeff.into_bigint())
+                .into_affine();
+            let scaled_input = prepared_input
+                .into_affine()
+                .into_group()
+                .mul_bigint(coeff.into_bigint())
+                .into_affine();
+
+            let ml = E::multi_miller_loop(
+                [
+                    <E::G1Affine as Into<E::G1Prepared>>::into(scaled_a),
+                    <E::G1Affine as Into<E::G1Prepared>>::into(scaled_input),
+                    <E::G1Affine as Into<E::G1Prepared>>::into(scaled_c),
+                ],
+                [
+                    proof.b.into(),
+                    pvk.gamma_g2_neg_pc.clone(),
+                    pvk.delta_g2_neg_pc.clone(),
+                ],
+            );
+            ml_result *= ml.0;
+        }
+
+        let test = E::final_exponentiation(ark_ec::pairing::MillerLoopOutput(ml_result)).unwrap();
+
+        // The right hand side should be e(α, β)^(∑ rᵢ)
+        let expected = pvk.alpha_g1_beta_g2.pow(sum_coeffs.into_bigint());
+
+        Ok(test.0 == expected)
     }
 }
