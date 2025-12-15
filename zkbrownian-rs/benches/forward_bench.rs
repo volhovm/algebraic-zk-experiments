@@ -3,7 +3,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use rand::thread_rng;
 use zkbrownian::crypto::curve_ops::keygen;
-use zkbrownian::protocol::{forward, generate_state, spawn};
+use zkbrownian::protocol::{forward, generate_random_state, spawn};
 use zkbrownian::types::PublicParams;
 
 fn bench_keygen(c: &mut Criterion) {
@@ -40,7 +40,7 @@ fn bench_forward(c: &mut Criterion) {
     let pp = PublicParams::generate(2, 10, &mut rng).expect("Failed to generate params");
 
     // Setup: generate protocol state
-    let generated_state = generate_state(&pp, 2, &mut rng);
+    let generated_state = generate_random_state(&pp, 2, &mut rng);
     let user_0_view = &generated_state.users_view[0];
 
     let message = spawn(

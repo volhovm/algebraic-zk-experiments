@@ -10,7 +10,7 @@ pub mod verify;
 
 pub use bulletin_board::*;
 pub use forward::{
-    forward, generate_state, GeneratedState, NeighborInfo, NeighboursView, UserView,
+    forward, generate_random_state, GeneratedState, NeighborInfo, NeighboursView, UserView,
 };
 pub use routing::*;
 pub use spawn::spawn;

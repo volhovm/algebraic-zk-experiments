@@ -258,7 +258,11 @@ fn generate_precompute(
 ///
 /// # Returns
 /// GeneratedState containing protocol state, keys, and weight matrix
-pub fn generate_state<R: Rng>(pp: &PublicParams, num_users: usize, rng: &mut R) -> GeneratedState {
+pub fn generate_random_state<R: Rng>(
+    pp: &PublicParams,
+    num_users: usize,
+    rng: &mut R,
+) -> GeneratedState {
     use crate::crypto::curve_ops::keygen;
     use crate::types::{MerkleTree, SubMerkleTree};
 
@@ -797,7 +801,7 @@ mod tests {
         let pp = create_test_public_params(&mut rng);
 
         // Setup: generate protocol state with 3 users
-        let generated_state = generate_state(&pp, 3, &mut rng);
+        let generated_state = generate_random_state(&pp, 3, &mut rng);
         let user_0_view = &generated_state.users_view[0];
 
         // Spawn initial message from user 0
@@ -834,7 +838,7 @@ mod tests {
         let pp = create_test_public_params(&mut rng);
 
         // Setup: generate protocol state with 1 user
-        let generated_state = generate_state(&pp, 1, &mut rng);
+        let generated_state = generate_random_state(&pp, 1, &mut rng);
         let user_0_view = &generated_state.users_view[0];
 
         // Create a message with maximum hops
@@ -889,7 +893,7 @@ mod tests {
         let pp = create_test_public_params(&mut rng);
 
         // Generate protocol state
-        let generated_state = generate_state(&pp, num_users, &mut rng);
+        let generated_state = generate_random_state(&pp, num_users, &mut rng);
 
         // Verify basic structure
         assert_eq!(generated_state.users_view.len(), num_users);
@@ -1048,7 +1052,7 @@ mod tests {
         let pp = create_test_public_params(&mut rng);
 
         // Generate protocol state
-        let generated_state = generate_state(&pp, num_users, &mut rng);
+        let generated_state = generate_random_state(&pp, num_users, &mut rng);
 
         println!("Testing NeighboursView for {} users", num_users);
 

@@ -7,8 +7,9 @@
 //! 4. Verifying the message
 
 use rand::thread_rng;
+use std::time::Instant;
 use zkbrownian::protocol::{
-    forward, generate_state, spawn, verify, BulletinBoard, BulletinBoardEntry,
+    forward, generate_random_state, spawn, verify, BulletinBoard, BulletinBoardEntry,
     InMemoryBulletinBoard,
 };
 use zkbrownian::types::{PublicKey, PublicParams, WeightCommitment};
@@ -26,7 +27,7 @@ fn test_basic_forward_protocol() {
 
     // Step 2: Generate protocol state with multiple users
     println!("Step 1: Generating protocol state for 5 users...");
-    let generated_state = generate_state(&pp, num_nodes, &mut rng);
+    let generated_state = generate_random_state(&pp, num_nodes, &mut rng);
 
     for i in 0..num_nodes {
         println!(
@@ -80,7 +81,10 @@ fn test_basic_forward_protocol() {
     let mut current_message = message;
     let mut current_node_index = spawner_index;
 
-    for hop in 0..MAX_HOPS.min(3) {
+    let num_hops = MAX_HOPS.min(3);
+    let start_time = Instant::now();
+
+    for hop in 0..num_hops {
         // Forward up to 3 hops for demo
         println!("\n  Hop {}:", hop + 1);
         println!("    Current node: {}", current_node_index);
@@ -107,6 +111,14 @@ fn test_basic_forward_protocol() {
         current_message = new_message;
         current_node_index = next_node_index;
     }
+
+    let elapsed = start_time.elapsed();
+    println!(
+        "\n  Timing: {} hops completed in {:.2} ms ({:.2} ms per forward)",
+        num_hops,
+        elapsed.as_secs_f64() * 1000.0,
+        elapsed.as_secs_f64() * 1000.0 / num_hops as f64
+    );
 
     // Step 5: Verify the final message
     println!("\n\nStep 5: Verifying final message...");
@@ -138,6 +150,162 @@ fn test_basic_forward_protocol() {
             entry.message.hop_count(),
             entry.receiver_index
         );
+    }
+
+    println!("\n=== Test Complete ===");
+}
+
+#[test]
+fn test_full_protocol() {
+    println!("=== ZK Brownian Full Protocol Test ===\n");
+    println!("Testing concurrent packet forwarding with multiple users\n");
+
+    let mut rng = thread_rng();
+
+    // Step 1: Create public parameters
+    let num_nodes = 5;
+    let pp = PublicParams::generate(num_nodes, 10, &mut rng).expect("Failed to generate params");
+
+    // Step 2: Generate protocol state with multiple users
+    println!(
+        "Step 1: Generating protocol state for {} users...",
+        num_nodes
+    );
+    let generated_state = generate_random_state(&pp, num_nodes, &mut rng);
+
+    for i in 0..num_nodes {
+        println!(
+            "  User {} created with {} neighbors",
+            i,
+            generated_state.users_view[i]
+                .neighbours_view
+                .neighbors
+                .len()
+        );
+    }
+
+    // Step 3: Create bulletin board
+    println!("\nStep 2: Initializing bulletin board...");
+    let mut bulletin_board = InMemoryBulletinBoard::new();
+
+    // Step 4: Each user spawns 50 packets
+    const NUM_PACKETS_PER_USER: usize = 50;
+    const TTL: usize = 5;
+
+    println!(
+        "\nStep 3: Each user spawning {} packets...",
+        NUM_PACKETS_PER_USER
+    );
+
+    // Store initial messages for each user
+    // users_packets[user_idx] contains all packets spawned by that user
+    let mut users_packets: Vec<Vec<_>> = vec![Vec::new(); num_nodes];
+
+    for user_idx in 0..num_nodes {
+        let user_view = &generated_state.users_view[user_idx];
+        let session_id = 1000 + user_idx;
+
+        for packet_id in 0..NUM_PACKETS_PER_USER {
+            let message = spawn(
+                &user_view.secret_key,
+                &user_view.public_key,
+                packet_id as u32,
+                session_id as u64,
+                &mut rng,
+            )
+            .expect("Failed to spawn message");
+
+            users_packets[user_idx].push((message, user_idx));
+        }
+
+        println!(
+            "  User {} spawned {} packets (session {})",
+            user_idx, NUM_PACKETS_PER_USER, session_id
+        );
+    }
+
+    // Step 5: Forward messages through TTL rounds
+    println!("\nStep 4: Forwarding packets through {} TTL rounds...", TTL);
+
+    for ttl_round in 0..TTL {
+        println!("\n=== TTL Round {} ===", ttl_round);
+
+        let round_start = Instant::now();
+        let mut total_forwards = 0;
+
+        // Collect all messages to forward this round (snapshot at start of round)
+        // This prevents forwarding newly arrived messages in the same round
+        let mut messages_to_forward: Vec<Vec<_>> = vec![Vec::new(); num_nodes];
+        for user_idx in 0..num_nodes {
+            messages_to_forward[user_idx] = users_packets[user_idx].drain(..).collect();
+        }
+
+        // Process each user's packets sequentially
+        for user_idx in 0..num_nodes {
+            for (message, _origin_user) in messages_to_forward[user_idx].drain(..) {
+                let current_user_view = &generated_state.users_view[user_idx];
+
+                // Forward the message
+                let (new_message, next_node_index, _diversifier) =
+                    forward(&pp, current_user_view, &message, &mut rng)
+                        .expect("Failed to forward message");
+
+                // Post to bulletin board
+                let entry = BulletinBoardEntry {
+                    message: new_message.clone(),
+                    receiver_index: next_node_index,
+                    addressed_to: new_message.hops.last().unwrap().ppk.clone(),
+                };
+
+                bulletin_board.post(entry).unwrap();
+                total_forwards += 1;
+
+                // Add message to the next user's queue for the NEXT round
+                users_packets[next_node_index].push((new_message, _origin_user));
+            }
+        }
+
+        let round_elapsed = round_start.elapsed();
+        println!(
+            "  Round {} complete: {} forwards in {:.2} ms ({:.2} ms per forward)",
+            ttl_round,
+            total_forwards,
+            round_elapsed.as_secs_f64() * 1000.0,
+            if total_forwards > 0 {
+                round_elapsed.as_secs_f64() * 1000.0 / total_forwards as f64
+            } else {
+                0.0
+            }
+        );
+    }
+
+    // Step 6: Summary
+    println!("\n=== Protocol Summary ===");
+    let all_messages = bulletin_board.get_all_messages();
+    println!("  Total messages on bulletin board: {}", all_messages.len());
+    println!(
+        "  Expected messages: {}",
+        num_nodes * NUM_PACKETS_PER_USER * TTL
+    );
+
+    // Verify we have the expected number of messages
+    assert_eq!(
+        all_messages.len(),
+        num_nodes * NUM_PACKETS_PER_USER * TTL,
+        "Should have exactly one forward per packet per TTL round"
+    );
+
+    // Count messages by hop count
+    let mut hop_counts = std::collections::HashMap::new();
+    for entry in &all_messages {
+        *hop_counts.entry(entry.message.hop_count()).or_insert(0) += 1;
+    }
+
+    println!("\n  Messages by hop count:");
+    for hop in 0..=TTL {
+        if let Some(count) = hop_counts.get(&hop) {
+            println!("    {} hops: {} messages", hop, count);
+        }
     }
 
     println!("\n=== Test Complete ===");
