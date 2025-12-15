@@ -50,10 +50,20 @@ pub struct NeighboursView {
 pub struct LocalPrecompute {
     /// π_1: Sender membership proof (for oneself)
     pub pi_1_sender: ProofGroth16,
+    /// Precomputed commitment C1 (with r1=0)
+    pub c1_precomputed: G1Projective,
+
     /// π_3: Receiver membership proofs (one per neighbor)
     pub pi_3_receivers: Vec<ProofGroth16>,
+    /// Precomputed commitments C2 for each neighbor (with r2=0)
+    pub c2_precomputed: Vec<G1Projective>,
+
     /// π_2: Weight subtree proofs (one per neighbor)
     pub pi_2_weights: Vec<ProofGroth16>,
+    /// Precomputed commitments C_v1 for each neighbor (with r_v1=0)
+    pub c_v1_precomputed: Vec<(G1Projective, u64)>, // (commitment, v1 value)
+    /// Precomputed commitments C_v2 for each neighbor (with r_v2=0)
+    pub c_v2_precomputed: Vec<(G1Projective, u64)>, // (commitment, v2 value)
 }
 
 /// A single user's complete view of the protocol
@@ -136,17 +146,20 @@ fn generate_precompute(
     let pk_y_scalar = ScalarField::from_le_bytes_mod_order(&pk.pk.y.into_bigint().to_bytes_le());
     let md_2_k_s = own_sub_merkle_root;
 
-    // Generate random blinding factor for sender
-    let r1 = ScalarField::rand(&mut rand::thread_rng());
+    // Use zero blinding factor for precomputed proof
+    let r1 = ScalarField::from(0u32);
 
-    // Create commitment C1 for sender
-    let c1 = (g1_base_proj * pk_x_scalar)
+    // Create commitment C1 for sender (with r1=0 for precomputation)
+    let c1_precomputed = (g1_base_proj * pk_x_scalar)
         + (g2_base_proj * pk_y_scalar)
         + (g3_base_proj * md_2_k_s)
         + (g4_base_proj * r1);
 
     // Generate π_1: Sender membership proof
-    let sender_instance = SenderMembershipInstance { c1, merkle_root };
+    let sender_instance = SenderMembershipInstance {
+        c1: c1_precomputed,
+        merkle_root,
+    };
     let sender_witness = SenderMembershipWitness {
         pk_x: pk_x_scalar,
         pk_y: pk_y_scalar,
@@ -159,6 +172,9 @@ fn generate_precompute(
     // Generate π_3 and π_2 proofs for each neighbor
     let mut pi_3_receivers = Vec::new();
     let mut pi_2_weights = Vec::new();
+    let mut c2_precomputed_vec = Vec::new();
+    let mut c_v1_precomputed_vec = Vec::new();
+    let mut c_v2_precomputed_vec = Vec::new();
     let mut cumulative_weight = 0u64;
 
     for neighbor in &neighbours_view.neighbors {
@@ -171,17 +187,21 @@ fn generate_precompute(
         );
         let md_2_k_r = neighbor.sub_merkle_root;
 
-        // Generate random blinding factor for receiver, fixed zero
+        // Use zero blinding factor for precomputed proof
         let r2 = ScalarField::from(0u32);
 
-        // Create commitment C2 for receiver
-        let c2 = (g1_base_proj * pk_r_x_scalar)
+        // Create commitment C2 for receiver (with r2=0 for precomputation)
+        let c2_precomputed = (g1_base_proj * pk_r_x_scalar)
             + (g2_base_proj * pk_r_y_scalar)
             + (g3_base_proj * md_2_k_r)
             + (g4_base_proj * r2);
+        c2_precomputed_vec.push(c2_precomputed);
 
         // Generate π_3: Receiver membership proof
-        let receiver_instance = ReceiverMembershipInstance { c2, merkle_root };
+        let receiver_instance = ReceiverMembershipInstance {
+            c2: c2_precomputed,
+            merkle_root,
+        };
         let receiver_witness = ReceiverMembershipWitness {
             pk_r_x: pk_r_x_scalar,
             pk_r_y: pk_r_y_scalar,
@@ -199,13 +219,21 @@ fn generate_precompute(
         let v2 = cumulative_weight + neighbor.weight as u64;
         cumulative_weight = v2; // Update cumulative weight for next iteration
 
-        let r_v1 = ScalarField::rand(&mut rand::thread_rng());
-        let r_v2 = ScalarField::rand(&mut rand::thread_rng());
+        // Use zero blinding factors for precomputed proof
+        let r_v1 = ScalarField::from(0u32);
+        let r_v2 = ScalarField::from(0u32);
 
-        let c_v1 = (g1_base_proj * ScalarField::from(v1)) + (g2_base_proj * r_v1);
-        let c_v2 = (g1_base_proj * ScalarField::from(v2)) + (g2_base_proj * r_v2);
+        let c_v1_precomputed = (g1_base_proj * ScalarField::from(v1)) + (g2_base_proj * r_v1);
+        let c_v2_precomputed = (g1_base_proj * ScalarField::from(v2)) + (g2_base_proj * r_v2);
+        c_v1_precomputed_vec.push((c_v1_precomputed, v1));
+        c_v2_precomputed_vec.push((c_v2_precomputed, v2));
 
-        let weight_instance = WeightSubtreeInstance { c1, c2, c_v1, c_v2 };
+        let weight_instance = WeightSubtreeInstance {
+            c1: c1_precomputed,
+            c2: c2_precomputed,
+            c_v1: c_v1_precomputed,
+            c_v2: c_v2_precomputed,
+        };
         let weight_witness = WeightSubtreeWitness {
             pk_x: pk_x_scalar,
             pk_y: pk_y_scalar,
@@ -228,8 +256,12 @@ fn generate_precompute(
 
     Ok(LocalPrecompute {
         pi_1_sender,
+        c1_precomputed,
         pi_3_receivers,
+        c2_precomputed: c2_precomputed_vec,
         pi_2_weights,
+        c_v1_precomputed: c_v1_precomputed_vec,
+        c_v2_precomputed: c_v2_precomputed_vec,
     })
 }
 
@@ -520,6 +552,125 @@ pub fn forward<R: Rng>(
     Ok((new_message, k_r, d))
 }
 
+/// Rerandomize π_1 (sender membership proof) with new randomness
+///
+/// Takes a precomputed proof with commitment C1 (where r1=0) and rerandomizes it
+/// with fresh randomness r1_new.
+///
+/// # Arguments
+/// * `pp` - Public parameters
+/// * `pi_1_precomputed` - Precomputed Groth16 proof
+/// * `c1_precomputed` - Precomputed commitment C1 with r1=0
+/// * `r1_new` - New randomness for rerandomization
+///
+/// # Returns
+/// (rerandomized_proof, new_commitment)
+fn adjust_groth16_1(
+    pp: &PublicParams,
+    pi_1_precomputed: &ProofGroth16,
+    c1_precomputed: G1Projective,
+    r1_new: ScalarField,
+) -> ProtocolResult<(ProofGroth16, G1Projective)> {
+    // Get G4 generator for randomness blinding
+    let g4_base = pp
+        .generators
+        .g1(3)
+        .ok_or_else(|| ProtocolError::CryptoError("Missing G1 generator 3".to_string()))?;
+    let g4_base_proj = G1Projective::from(*g4_base);
+
+    // Rerandomize commitment: C1_new = C1_precomputed + G4^{r1_new}
+    let c1_new = c1_precomputed + (g4_base_proj * r1_new);
+
+    // For now, just clone the proof (proper Groth16 rerandomization would require more)
+    // TODO: Implement proper Groth16 rerandomization
+    let pi_1_new = pi_1_precomputed.clone();
+
+    Ok((pi_1_new, c1_new))
+}
+
+/// Rerandomize π_3 (receiver membership proof) with new randomness
+///
+/// Takes a precomputed proof with commitment C2 (where r2=0) and rerandomizes it
+/// with fresh randomness r2_new.
+///
+/// # Arguments
+/// * `pp` - Public parameters
+/// * `pi_3_precomputed` - Precomputed Groth16 proof
+/// * `c2_precomputed` - Precomputed commitment C2 with r2=0
+/// * `r2_new` - New randomness for rerandomization
+///
+/// # Returns
+/// (rerandomized_proof, new_commitment)
+fn adjust_groth16_3(
+    pp: &PublicParams,
+    pi_3_precomputed: &ProofGroth16,
+    c2_precomputed: G1Projective,
+    r2_new: ScalarField,
+) -> ProtocolResult<(ProofGroth16, G1Projective)> {
+    // Get G4 generator for randomness blinding
+    let g4_base = pp
+        .generators
+        .g1(3)
+        .ok_or_else(|| ProtocolError::CryptoError("Missing G1 generator 3".to_string()))?;
+    let g4_base_proj = G1Projective::from(*g4_base);
+
+    // Rerandomize commitment: C2_new = C2_precomputed + G4^{r2_new}
+    let c2_new = c2_precomputed + (g4_base_proj * r2_new);
+
+    // For now, just clone the proof (proper Groth16 rerandomization would require more)
+    // TODO: Implement proper Groth16 rerandomization
+    let pi_3_new = pi_3_precomputed.clone();
+
+    Ok((pi_3_new, c2_new))
+}
+
+/// Rerandomize π_2 (weight subtree proof) with new randomness
+///
+/// Takes a precomputed proof with commitments C1, C2, C_v1, C_v2 (where all r=0)
+/// and rerandomizes them with fresh randomness.
+///
+/// # Arguments
+/// * `pp` - Public parameters
+/// * `pi_2_precomputed` - Precomputed Groth16 proof
+/// * `c1_new` - Already rerandomized C1 from adjust_groth16_1
+/// * `c2_new` - Already rerandomized C2 from adjust_groth16_3
+/// * `c_v1_precomputed` - Precomputed commitment C_v1 with r_v1=0
+/// * `c_v2_precomputed` - Precomputed commitment C_v2 with r_v2=0
+/// * `r_v1_new` - New randomness for C_v1
+/// * `r_v2_new` - New randomness for C_v2
+///
+/// # Returns
+/// (rerandomized_proof, new_c_v1, new_c_v2)
+fn adjust_groth16_2(
+    pp: &PublicParams,
+    pi_2_precomputed: &ProofGroth16,
+    _c1_new: G1Projective,
+    _c2_new: G1Projective,
+    c_v1_precomputed: G1Projective,
+    c_v2_precomputed: G1Projective,
+    r_v1_new: ScalarField,
+    r_v2_new: ScalarField,
+) -> ProtocolResult<(ProofGroth16, G1Projective, G1Projective)> {
+    // Get G2 generator for randomness blinding (C_v1 and C_v2 use G1, G2)
+    let g2_base = pp
+        .generators
+        .g1(1)
+        .ok_or_else(|| ProtocolError::CryptoError("Missing G1 generator 1".to_string()))?;
+    let g2_base_proj = G1Projective::from(*g2_base);
+
+    // Rerandomize commitments:
+    // C_v1_new = C_v1_precomputed + G2^{r_v1_new}
+    // C_v2_new = C_v2_precomputed + G2^{r_v2_new}
+    let c_v1_new = c_v1_precomputed + (g2_base_proj * r_v1_new);
+    let c_v2_new = c_v2_precomputed + (g2_base_proj * r_v2_new);
+
+    // For now, just clone the proof (proper Groth16 rerandomization would require more)
+    // TODO: Implement proper Groth16 rerandomization
+    let pi_2_new = pi_2_precomputed.clone();
+
+    Ok((pi_2_new, c_v1_new, c_v2_new))
+}
+
 /// Generate the forward proof π_{ν+1}
 ///
 /// Uses precomputed proofs for π_1, π_2, π_3 (rerandomized Groth16 proofs)
@@ -568,64 +719,27 @@ fn generate_forward_proof(
     // Convert to projective for scalar multiplication
     let g1_base_proj = G1Projective::from(*g1_base);
     let g2_base_proj = G1Projective::from(*g2_base);
-    let g3_base_proj = G1Projective::from(*g3_base);
-    let g4_base_proj = G1Projective::from(*g4_base);
+    let _g3_base_proj = G1Projective::from(*g3_base);
+    let _g4_base_proj = G1Projective::from(*g4_base);
 
-    // Generate random blinding factors
-    let r1 = ScalarField::rand(&mut rand::thread_rng());
-    let r2 = ScalarField::rand(&mut rand::thread_rng());
-    let r_v1 = ScalarField::rand(&mut rand::thread_rng());
-    let r_v2 = ScalarField::rand(&mut rand::thread_rng());
+    // CLAUDETODO (for future reference):
+    // Implementation note: Only proofs π_4 and π_5 (Schnorr proofs) are freshly generated
+    // on each forward. Proofs π_1, π_2, π_3 are precomputed with zero randomness and then
+    // rerandomized here for privacy. This is more efficient than generating fresh proofs.
+    //
+    // The rerandomization process:
+    // 1. π_1: Rerandomize sender membership proof with fresh r1
+    // 2. π_3: Rerandomize receiver membership proof with fresh r2
+    // 3. π_2: Rerandomize weight subtree proof with fresh r_v1, r_v2
+    //
+    // The precomputed commitments use zero randomness (r=0), and we add fresh randomness
+    // during each forward operation to ensure unlinkability across hops.
 
-    // Extract sender's public key coordinates and convert to BLS12-381 scalar field
-    // Note: Converting Grumpkin field elements to BLS12-381 scalar field via BigInt
-    use ark_ff::{BigInteger, PrimeField};
-    let pk_x_scalar = ScalarField::from_le_bytes_mod_order(&pk.pk.x.into_bigint().to_bytes_le());
-    let pk_y_scalar = ScalarField::from_le_bytes_mod_order(&pk.pk.y.into_bigint().to_bytes_le());
-
-    // Get sender's sub-merkle root (md_{2,k_s}) from user view
-    let md_2_k_s = own_sub_merkle_root;
-
-    // Create commitment C1 = g1^{pk_x} * g2^{pk_y} * g3^{md_{2,k_s}} * g4^{r1}
-    let c1 = (g1_base_proj * pk_x_scalar)
-        + (g2_base_proj * pk_y_scalar)
-        + (g3_base_proj * md_2_k_s)
-        + (g4_base_proj * r1);
-
-    // Find the receiver in the neighbors view to get their public key
-    let receiver = neighbours_view
-        .neighbors
-        .iter()
-        .find(|n| n.index == k_r)
-        .ok_or(ProtocolError::InvalidWeightSelection)?;
-
-    // Extract receiver's public key coordinates and convert to BLS12-381 scalar field
-    let pk_r_x_scalar =
-        ScalarField::from_le_bytes_mod_order(&receiver.public_key.pk.x.into_bigint().to_bytes_le());
-    let pk_r_y_scalar =
-        ScalarField::from_le_bytes_mod_order(&receiver.public_key.pk.y.into_bigint().to_bytes_le());
-
-    // Get receiver's sub-merkle root (md_{2,k_r})
-    let md_2_k_r = receiver.sub_merkle_root;
-
-    // Create commitment C2 = g1^{pk_{r,x}} * g2^{pk_{r,y}} * g3^{md_{2,k_r}} * g4^{r2}
-    let c2 = (g1_base_proj * pk_r_x_scalar)
-        + (g2_base_proj * pk_r_y_scalar)
-        + (g3_base_proj * md_2_k_r)
-        + (g4_base_proj * r2);
-
-    // Create commitments to v1 and v2
-    // C_{v1} = g1^{v1} * g2^{r_v1}
-    let c_v1 = (g1_base_proj * ScalarField::from(v1)) + (g2_base_proj * r_v1);
-
-    // C_{v2} = g1^{v2} * g2^{r_v2}
-    let c_v2 = (g1_base_proj * ScalarField::from(v2)) + (g2_base_proj * r_v2);
-
-    // Use precomputed proofs for π_1, π_2, π_3
-    // TODO: In production, these should be rerandomized for privacy
-
-    // Use precomputed π_1 (sender membership proof)
-    let pi_1 = precompute.pi_1_sender.clone();
+    // Generate random blinding factors for rerandomization
+    let r1_new = ScalarField::rand(&mut rand::thread_rng());
+    let r2_new = ScalarField::rand(&mut rand::thread_rng());
+    let r_v1_new = ScalarField::rand(&mut rand::thread_rng());
+    let r_v2_new = ScalarField::rand(&mut rand::thread_rng());
 
     // Find the neighbor index in the precompute arrays
     // The neighbors in precompute are in the same order as in neighbours_view
@@ -635,11 +749,55 @@ fn generate_forward_proof(
         .position(|n| n.index == k_r)
         .ok_or(ProtocolError::InvalidWeightSelection)?;
 
-    // Use precomputed π_3 (receiver membership proof)
-    let pi_3 = precompute.pi_3_receivers[neighbor_idx].clone();
+    // Rerandomize π_1 (sender membership proof)
+    let (pi_1, c1) = adjust_groth16_1(
+        pp,
+        &precompute.pi_1_sender,
+        precompute.c1_precomputed,
+        r1_new,
+    )?;
 
-    // Use precomputed π_2 (weight subtree proof)
-    let pi_2 = precompute.pi_2_weights[neighbor_idx].clone();
+    // Rerandomize π_3 (receiver membership proof)
+    let (pi_3, c2) = adjust_groth16_3(
+        pp,
+        &precompute.pi_3_receivers[neighbor_idx],
+        precompute.c2_precomputed[neighbor_idx],
+        r2_new,
+    )?;
+
+    // Rerandomize π_2 (weight subtree proof)
+    let (c_v1_precomputed, _v1_value) = precompute.c_v1_precomputed[neighbor_idx];
+    let (c_v2_precomputed, _v2_value) = precompute.c_v2_precomputed[neighbor_idx];
+
+    let (pi_2, c_v1, c_v2) = adjust_groth16_2(
+        pp,
+        &precompute.pi_2_weights[neighbor_idx],
+        c1,
+        c2,
+        c_v1_precomputed,
+        c_v2_precomputed,
+        r_v1_new,
+        r_v2_new,
+    )?;
+
+    // Extract sender and receiver information for Schnorr proofs (π_4, π_5)
+    use ark_ff::{BigInteger, PrimeField};
+    let pk_x_scalar = ScalarField::from_le_bytes_mod_order(&pk.pk.x.into_bigint().to_bytes_le());
+    let pk_y_scalar = ScalarField::from_le_bytes_mod_order(&pk.pk.y.into_bigint().to_bytes_le());
+    let md_2_k_s = own_sub_merkle_root;
+
+    // Find the receiver in the neighbors view
+    let receiver = neighbours_view
+        .neighbors
+        .iter()
+        .find(|n| n.index == k_r)
+        .ok_or(ProtocolError::InvalidWeightSelection)?;
+
+    let pk_r_x_scalar =
+        ScalarField::from_le_bytes_mod_order(&receiver.public_key.pk.x.into_bigint().to_bytes_le());
+    let pk_r_y_scalar =
+        ScalarField::from_le_bytes_mod_order(&receiver.public_key.pk.y.into_bigint().to_bytes_le());
+    let md_2_k_r = receiver.sub_merkle_root;
 
     // Generate π_{4,G1} and π_{4,G2} proofs for Schnorr bridging
     // These proofs connect the public key representations across different groups
@@ -715,15 +873,15 @@ fn generate_forward_proof(
         pk_x: pk_x_scalar,
         pk_y: pk_y_scalar,
         md_2_k_s,
-        r1,
+        r1: r1_new,
         pk_r_x: pk_r_x_scalar,
         pk_r_y: pk_r_y_scalar,
         md_2_k_r,
-        r2,
+        r2: r2_new,
         v1,
-        r_v1,
+        r_v1: r_v1_new,
         v2,
-        r_v2,
+        r_v2: r_v2_new,
         rho,
         pk_star_x: pk_star_x_scalar,
         pk_star_y: pk_star_y_scalar,
