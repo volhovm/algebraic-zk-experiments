@@ -607,27 +607,41 @@ fn adjust_groth16_1(
     c12_precomputed: G1Projective,
     r1_new: ScalarField,
 ) -> ProtocolResult<(ProofGroth16, G1Projective, G1Projective)> {
-    // Get randomness bases hs[0] and hs[1]
-    let h0 = pp
-        .generators
-        .h_commitment(0)
-        .ok_or_else(|| ProtocolError::CryptoError("Missing h_commitment[0]".to_string()))?;
-    let h1 = pp
-        .generators
-        .h_commitment(1)
-        .ok_or_else(|| ProtocolError::CryptoError("Missing h_commitment[1]".to_string()))?;
-    let h0_proj = G1Projective::from(*h0);
-    let h1_proj = G1Projective::from(*h1);
+    use crate::proving::groth16::Groth16;
+    use ark_ec::AffineRepr;
+    use ark_ff::{PrimeField, Zero};
+    use ark_std::UniformRand;
 
-    // Rerandomize commitments:
-    // C11_new = C11_precomputed + hs[0]^{r1_new}
-    // C12_new = C12_precomputed + hs[1]^{r1_new}
-    let c11_new = c11_precomputed + (h0_proj * r1_new);
-    let c12_new = c12_precomputed + (h1_proj * r1_new);
+    // Generate randomness for proof rerandomization
+    let mut rng = rand::thread_rng();
+    let mut r1 = ScalarField::zero();
+    let mut r2 = ScalarField::zero();
+    while r1.is_zero() || r2.is_zero() {
+        r1 = ScalarField::rand(&mut rng);
+        r2 = ScalarField::rand(&mut rng);
+    }
 
-    // For now, just clone the proof (proper Groth16 rerandomization would require more)
-    // TODO: Implement proper Groth16 rerandomization
-    let pi_1_new = pi_1_precomputed.clone();
+    // For pi_1, the input is (c11, merkle_root)
+    // We only rerandomize c11, not merkle_root (it's a scalar)
+    // The commitment randomness is just r1_new (only one commitment)
+    let com_rs = vec![r1_new];
+
+    // Rerandomize the proof
+    let pi_1_new = Groth16::<PairingEngine>::rerandomize_proof_raw(
+        &pp.pk_merkle_membership.vk,
+        pi_1_precomputed,
+        r1,
+        r2,
+        &com_rs,
+    );
+
+    // Rerandomize c11 using delta_g1 from the merkle membership circuit
+    let delta_g1_merkle = pp.pk_merkle_membership.vk.delta_g1;
+    let c11_new = c11_precomputed + delta_g1_merkle.mul_bigint(r1_new.into_bigint());
+
+    // Rerandomize c12 using delta_g1 from the weight circuit
+    let delta_g1_weight = pp.pk_weight_subtree.vk.delta_g1;
+    let c12_new = c12_precomputed + delta_g1_weight.mul_bigint(r1_new.into_bigint());
 
     Ok((pi_1_new, c11_new, c12_new))
 }
@@ -653,27 +667,41 @@ fn adjust_groth16_3(
     c22_precomputed: G1Projective,
     r2_new: ScalarField,
 ) -> ProtocolResult<(ProofGroth16, G1Projective, G1Projective)> {
-    // Get randomness bases hs[0] and hs[1]
-    let h0 = pp
-        .generators
-        .h_commitment(0)
-        .ok_or_else(|| ProtocolError::CryptoError("Missing h_commitment[0]".to_string()))?;
-    let h1 = pp
-        .generators
-        .h_commitment(1)
-        .ok_or_else(|| ProtocolError::CryptoError("Missing h_commitment[1]".to_string()))?;
-    let h0_proj = G1Projective::from(*h0);
-    let h1_proj = G1Projective::from(*h1);
+    use crate::proving::groth16::Groth16;
+    use ark_ec::AffineRepr;
+    use ark_ff::{PrimeField, Zero};
+    use ark_std::UniformRand;
 
-    // Rerandomize commitments:
-    // C21_new = C21_precomputed + hs[0]^{r2_new}
-    // C22_new = C22_precomputed + hs[1]^{r2_new}
-    let c21_new = c21_precomputed + (h0_proj * r2_new);
-    let c22_new = c22_precomputed + (h1_proj * r2_new);
+    // Generate randomness for proof rerandomization
+    let mut rng = rand::thread_rng();
+    let mut r1 = ScalarField::zero();
+    let mut r2 = ScalarField::zero();
+    while r1.is_zero() || r2.is_zero() {
+        r1 = ScalarField::rand(&mut rng);
+        r2 = ScalarField::rand(&mut rng);
+    }
 
-    // For now, just clone the proof (proper Groth16 rerandomization would require more)
-    // TODO: Implement proper Groth16 rerandomization
-    let pi_3_new = pi_3_precomputed.clone();
+    // For pi_3, the input is (c21, merkle_root)
+    // We only rerandomize c21, not merkle_root (it's a scalar)
+    // The commitment randomness is just r2_new (only one commitment)
+    let com_rs = vec![r2_new];
+
+    // Rerandomize the proof
+    let pi_3_new = Groth16::<PairingEngine>::rerandomize_proof_raw(
+        &pp.pk_merkle_membership.vk,
+        pi_3_precomputed,
+        r1,
+        r2,
+        &com_rs,
+    );
+
+    // Rerandomize c21 using delta_g1 from the merkle membership circuit
+    let delta_g1_merkle = pp.pk_merkle_membership.vk.delta_g1;
+    let c21_new = c21_precomputed + delta_g1_merkle.mul_bigint(r2_new.into_bigint());
+
+    // Rerandomize c22 using delta_g1 from the weight circuit
+    let delta_g1_weight = pp.pk_weight_subtree.vk.delta_g1;
+    let c22_new = c22_precomputed + delta_g1_weight.mul_bigint(r2_new.into_bigint());
 
     Ok((pi_3_new, c21_new, c22_new))
 }
@@ -686,43 +714,72 @@ fn adjust_groth16_3(
 /// # Arguments
 /// * `pp` - Public parameters
 /// * `pi_2_precomputed` - Precomputed Groth16 proof
+/// * `c12_precomputed` - Precomputed commitment C12 (sender in weight circuit bases)
+/// * `c22_precomputed` - Precomputed commitment C22 (receiver in weight circuit bases)
 /// * `c_v1_precomputed` - Precomputed commitment C_v1 with r_v1=0
 /// * `c_v2_precomputed` - Precomputed commitment C_v2 with r_v2=0
+/// * `r1_new` - New randomness for C12 (from sender rerandomization)
+/// * `r2_new` - New randomness for C22 (from receiver rerandomization)
 /// * `r_v1_new` - New randomness for C_v1
 /// * `r_v2_new` - New randomness for C_v2
 ///
 /// # Returns
-/// (rerandomized_proof, new_c_v1, new_c_v2)
-///
-/// Note: C12 and C22 are not needed as parameters since C_v1/C_v2 rerandomization
-/// is independent of the sender/receiver commitments.
+/// (rerandomized_proof, new_c12, new_c22, new_c_v1, new_c_v2)
 #[allow(clippy::too_many_arguments)]
 fn adjust_groth16_2(
     pp: &PublicParams,
     pi_2_precomputed: &ProofGroth16,
+    c12_precomputed: G1Projective,
+    c22_precomputed: G1Projective,
     c_v1_precomputed: G1Projective,
     c_v2_precomputed: G1Projective,
+    r1_new: ScalarField,
+    r2_new: ScalarField,
     r_v1_new: ScalarField,
     r_v2_new: ScalarField,
-) -> ProtocolResult<(ProofGroth16, G1Projective, G1Projective)> {
-    // Get hs[1] for randomness blinding (C_v1 and C_v2 use weight circuit bases)
-    let h1 = pp
-        .generators
-        .h_commitment(1)
-        .ok_or_else(|| ProtocolError::CryptoError("Missing h_commitment[1]".to_string()))?;
-    let h1_proj = G1Projective::from(*h1);
+) -> ProtocolResult<(
+    ProofGroth16,
+    G1Projective,
+    G1Projective,
+    G1Projective,
+    G1Projective,
+)> {
+    use crate::proving::groth16::Groth16;
+    use ark_ec::AffineRepr;
+    use ark_ff::{PrimeField, Zero};
+    use ark_std::UniformRand;
 
-    // Rerandomize commitments:
-    // C_v1_new = C_v1_precomputed + hs[1]^{r_v1_new}
-    // C_v2_new = C_v2_precomputed + hs[1]^{r_v2_new}
-    let c_v1_new = c_v1_precomputed + (h1_proj * r_v1_new);
-    let c_v2_new = c_v2_precomputed + (h1_proj * r_v2_new);
+    // Generate randomness for proof rerandomization
+    let mut rng = rand::thread_rng();
+    let mut r1 = ScalarField::zero();
+    let mut r2 = ScalarField::zero();
+    while r1.is_zero() || r2.is_zero() {
+        r1 = ScalarField::rand(&mut rng);
+        r2 = ScalarField::rand(&mut rng);
+    }
 
-    // For now, just clone the proof (proper Groth16 rerandomization would require more)
-    // TODO: Implement proper Groth16 rerandomization
-    let pi_2_new = pi_2_precomputed.clone();
+    // For pi_2, the input is (c12, c22, c_v1, c_v2)
+    // All four are commitments that need to be rerandomized
+    // Randomness for each commitment
+    let com_rs = vec![r1_new, r2_new, r_v1_new, r_v2_new];
 
-    Ok((pi_2_new, c_v1_new, c_v2_new))
+    // Rerandomize the proof
+    let pi_2_new = Groth16::<PairingEngine>::rerandomize_proof_raw(
+        &pp.pk_weight_subtree.vk,
+        pi_2_precomputed,
+        r1,
+        r2,
+        &com_rs,
+    );
+
+    // Rerandomize all four commitments using delta_g1 from the weight subtree circuit
+    let delta_g1_weight = pp.pk_weight_subtree.vk.delta_g1;
+    let c12_new = c12_precomputed + delta_g1_weight.mul_bigint(r1_new.into_bigint());
+    let c22_new = c22_precomputed + delta_g1_weight.mul_bigint(r2_new.into_bigint());
+    let c_v1_new = c_v1_precomputed + delta_g1_weight.mul_bigint(r_v1_new.into_bigint());
+    let c_v2_new = c_v2_precomputed + delta_g1_weight.mul_bigint(r_v2_new.into_bigint());
+
+    Ok((pi_2_new, c12_new, c22_new, c_v1_new, c_v2_new))
 }
 
 /// Generate the forward proof π_{ν+1}
@@ -856,14 +913,25 @@ fn generate_forward_proof(
     let (c_v1_precomputed, _v1_value) = precompute.c_v1_precomputed[neighbor_idx];
     let (c_v2_precomputed, _v2_value) = precompute.c_v2_precomputed[neighbor_idx];
 
-    let (pi_2, c_v1, c_v2) = adjust_groth16_2(
+    // Note: c12 and c22 from above are already rerandomized, but we need to pass them
+    // to adjust_groth16_2 along with c_v1 and c_v2 to rerandomize the proof properly
+    let (pi_2, c12_final, c22_final, c_v1, c_v2) = adjust_groth16_2(
         pp,
         &precompute.pi_2_weights[neighbor_idx],
+        c12,
+        c22,
         c_v1_precomputed,
         c_v2_precomputed,
+        r1_new,
+        r2_new,
         r_v1_new,
         r_v2_new,
     )?;
+
+    // Use the final c12 and c22 values from adjust_groth16_2
+    // These are properly rerandomized with the weight circuit's delta_g1
+    let c12 = c12_final;
+    let c22 = c22_final;
 
     // Extract sender and receiver information for Schnorr proofs (π_4, π_5)
     use ark_ff::{BigInteger, PrimeField};

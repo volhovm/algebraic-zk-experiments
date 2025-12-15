@@ -362,6 +362,101 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         (proof, commitments)
     }
 
+    /// Rerandomize a Groth16 proof and its input commitments using externally provided randomness.
+    ///
+    /// This is a raw version of `rerandomize_proof_and_input` that accepts all randomness
+    /// from the outside instead of generating it internally.
+    ///
+    /// # Arguments
+    /// * `vk` - The verification key
+    /// * `proof` - The original proof to rerandomize
+    /// * `com_input` - The input commitments to rerandomize
+    /// * `r1` - First randomness scalar for proof rerandomization (must be non-zero)
+    /// * `r2` - Second randomness scalar for proof rerandomization (must be non-zero)
+    /// * `com_rs` - Randomness scalars for each input commitment
+    ///
+    /// # Returns
+    /// (rerandomized_proof, rerandomized_commitments)
+    pub fn rerandomize_proof_and_input_raw(
+        vk: &VerifyingKey<E>,
+        proof: &Proof<E>,
+        com_input: &[E::G1],
+        r1: E::ScalarField,
+        r2: E::ScalarField,
+        com_rs: &[E::ScalarField],
+    ) -> (Proof<E>, Vec<E::G1>) {
+        assert!(!r1.is_zero(), "r1 must be non-zero");
+        assert!(!r2.is_zero(), "r2 must be non-zero");
+        assert_eq!(
+            com_input.len(),
+            com_rs.len(),
+            "com_input and com_rs must have the same length"
+        );
+
+        let com_r_sum: E::ScalarField =
+            com_rs.iter().fold(E::ScalarField::from(0u32), |x, y| x + y);
+
+        let new_a = proof.a.mul(r1.inverse().unwrap());
+        let new_b = proof.b.mul(r1) + &vk.delta_g2.mul(r1 * &r2);
+        let new_c = proof.c + proof.a.mul(r2).into_affine() - &(vk.g1_generator * com_r_sum);
+
+        let proof = Proof {
+            a: new_a.into_affine(),
+            b: new_b.into_affine(),
+            c: new_c.into_affine(),
+        };
+
+        let commitments = {
+            let mut commitments: Vec<_> = com_input.to_vec();
+
+            for (i, com_r) in com_rs.iter().enumerate() {
+                commitments[i].add_assign(&vk.delta_g1.mul_bigint(com_r.into_bigint()))
+            }
+            commitments
+        };
+
+        (proof, commitments)
+    }
+
+    /// Rerandomize only a Groth16 proof using externally provided randomness.
+    ///
+    /// This function rerandomizes the proof without touching the input commitments.
+    /// The caller is responsible for rerandomizing commitments separately using the
+    /// appropriate delta_g1 bases from the verification keys.
+    ///
+    /// # Arguments
+    /// * `vk` - The verification key
+    /// * `proof` - The original proof to rerandomize
+    /// * `r1` - First randomness scalar for proof rerandomization (must be non-zero)
+    /// * `r2` - Second randomness scalar for proof rerandomization (must be non-zero)
+    /// * `com_rs` - Randomness scalars for each input commitment
+    ///
+    /// # Returns
+    /// The rerandomized proof
+    pub fn rerandomize_proof_raw(
+        vk: &VerifyingKey<E>,
+        proof: &Proof<E>,
+        r1: E::ScalarField,
+        r2: E::ScalarField,
+        com_rs: &[E::ScalarField],
+    ) -> Proof<E> {
+        assert!(!r1.is_zero(), "r1 must be non-zero");
+        assert!(!r2.is_zero(), "r2 must be non-zero");
+
+        let com_r_sum: E::ScalarField =
+            com_rs.iter().fold(E::ScalarField::from(0u32), |x, y| x + y);
+
+        let new_a = proof.a.mul(r1.inverse().unwrap());
+        let new_b = proof.b.mul(r1) + &vk.delta_g2.mul(r1 * &r2);
+        let new_c = proof.c + proof.a.mul(r2).into_affine() - &(vk.g1_generator * com_r_sum);
+
+        Proof {
+            a: new_a.into_affine(),
+            b: new_b.into_affine(),
+            c: new_c.into_affine(),
+        }
+    }
+
     fn calculate_coeff<G: AffineRepr>(
         initial: G::Group,
         query: &[G],
