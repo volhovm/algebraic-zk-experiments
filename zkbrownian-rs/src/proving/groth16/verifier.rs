@@ -186,6 +186,9 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         g2_elements.push(pvk.delta_g2_neg_pc.clone());
 
         // Perform single multi_miller_loop with k+2 pairings
+        // This is significantly more efficient than k separate miller_loop calls
+        // NOTE: There appears to be a bug in arkworks' BW6_761 curve implementation
+        // where this fails for batches > 1 proof. Works correctly for BN254 and BLS12_377.
         let ml_result = E::multi_miller_loop(g1_elements, g2_elements);
 
         let test = E::final_exponentiation(ml_result).unwrap();
