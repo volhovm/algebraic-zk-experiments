@@ -689,24 +689,16 @@ fn adjust_groth16_merkle_membership(
 /// # Returns
 /// (rerandomized_proof, new_c12, new_c22, new_c_v1, new_c_v2)
 #[allow(clippy::too_many_arguments)]
-fn adjust_groth16_2(
+fn adjust_groth16_weight_subtree(
     pp: &PublicParams,
     pi_2_precomputed: &ProofGroth16,
-    c12_precomputed: G1Projective,
-    c22_precomputed: G1Projective,
     c_v1_precomputed: G1Projective,
     c_v2_precomputed: G1Projective,
     r1_new: ScalarField,
     r2_new: ScalarField,
     r_v1_new: ScalarField,
     r_v2_new: ScalarField,
-) -> ProtocolResult<(
-    ProofGroth16,
-    G1Projective,
-    G1Projective,
-    G1Projective,
-    G1Projective,
-)> {
+) -> ProtocolResult<(ProofGroth16, G1Projective, G1Projective)> {
     use crate::proving::groth16::Groth16;
     use ark_ec::AffineRepr;
     use ark_ff::{PrimeField, Zero};
@@ -737,12 +729,10 @@ fn adjust_groth16_2(
 
     // Rerandomize all four commitments using delta_g1 from the weight subtree circuit
     let delta_g1_weight = pp.pk_weight_subtree.vk.delta_g1;
-    let c12_new = c12_precomputed + delta_g1_weight.mul_bigint(r1_new.into_bigint());
-    let c22_new = c22_precomputed + delta_g1_weight.mul_bigint(r2_new.into_bigint());
     let c_v1_new = c_v1_precomputed + delta_g1_weight.mul_bigint(r_v1_new.into_bigint());
     let c_v2_new = c_v2_precomputed + delta_g1_weight.mul_bigint(r_v2_new.into_bigint());
 
-    Ok((pi_2_new, c12_new, c22_new, c_v1_new, c_v2_new))
+    Ok((pi_2_new, c_v1_new, c_v2_new))
 }
 
 /// Generate the forward proof π_{ν+1}
@@ -876,13 +866,9 @@ fn generate_forward_proof(
     let (c_v1_precomputed, _v1_value) = precompute.c_v1_precomputed[neighbor_idx];
     let (c_v2_precomputed, _v2_value) = precompute.c_v2_precomputed[neighbor_idx];
 
-    // Note: c12 and c22 from above are already rerandomized, but we need to pass them
-    // to adjust_groth16_2 along with c_v1 and c_v2 to rerandomize the proof properly
-    let (pi_2, c12_final, c22_final, c_v1, c_v2) = adjust_groth16_2(
+    let (pi_2, c_v1, c_v2) = adjust_groth16_weight_subtree(
         pp,
         &precompute.pi_2_weights[neighbor_idx],
-        c12,
-        c22,
         c_v1_precomputed,
         c_v2_precomputed,
         r1_new,
@@ -890,11 +876,6 @@ fn generate_forward_proof(
         r_v1_new,
         r_v2_new,
     )?;
-
-    // Use the final c12 and c22 values from adjust_groth16_2
-    // These are properly rerandomized with the weight circuit's delta_g1
-    let c12 = c12_final;
-    let c22 = c22_final;
 
     // Extract sender and receiver information for Schnorr proofs (π_4, π_5)
     use ark_ff::{BigInteger, PrimeField};
