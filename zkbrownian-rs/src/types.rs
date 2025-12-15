@@ -10,6 +10,64 @@ pub use crate::crypto::curve::{
     G3 as GrumpkinPoint,
 };
 
+/// Wrapper type for G1 to enable Serde serialization
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct G1Wrapper(pub G1);
+
+impl Serialize for G1Wrapper {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut bytes = Vec::new();
+        self.0
+            .serialize_compressed(&mut bytes)
+            .map_err(|e| serde::ser::Error::custom(format!("Serialization error: {}", e)))?;
+        serializer.serialize_bytes(&bytes)
+    }
+}
+
+impl<'de> Deserialize<'de> for G1Wrapper {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        let g1 = G1::deserialize_compressed(&bytes[..])
+            .map_err(|e| DeError::custom(format!("Deserialization error: {}", e)))?;
+        Ok(G1Wrapper(g1))
+    }
+}
+
+/// Wrapper type for G3 to enable Serde serialization
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct G3Wrapper(pub G3);
+
+impl Serialize for G3Wrapper {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut bytes = Vec::new();
+        self.0
+            .serialize_compressed(&mut bytes)
+            .map_err(|e| serde::ser::Error::custom(format!("Serialization error: {}", e)))?;
+        serializer.serialize_bytes(&bytes)
+    }
+}
+
+impl<'de> Deserialize<'de> for G3Wrapper {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        let g3 = G3::deserialize_compressed(&bytes[..])
+            .map_err(|e| DeError::custom(format!("Deserialization error: {}", e)))?;
+        Ok(G3Wrapper(g3))
+    }
+}
+
 /// Secret key (scalar in the field)
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct SecretKey {
@@ -198,7 +256,7 @@ impl<'de, G: Send + Sync> Deserialize<'de> for Schnorr<G> {
 
 /// Proof component
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize, Serialize, Deserialize)]
-pub struct Proof {
+pub struct HopProofs {
     /// π_1: Sender membership proof (Groth16)
     pub pi_1: ProofGroth16,
     /// π_2: Weight subtree proof (Groth16)
@@ -219,7 +277,23 @@ pub struct Hop {
     /// PRF output for this hop
     pub phi: PrfOutput,
     /// Proof of correct forwarding for this hop
-    pub pi: Proof,
+    pub pi: HopProofs,
+    /// Commitment to sender with merkle circuit bases (C11)
+    pub c11: G1Wrapper,
+    /// Commitment to sender with weight circuit bases (C12)
+    pub c12: G1Wrapper,
+    /// Commitment to receiver with merkle circuit bases (C21)
+    pub c21: G1Wrapper,
+    /// Commitment to receiver with weight circuit bases (C22)
+    pub c22: G1Wrapper,
+    /// Commitment to v1 (cumulative weight before receiver)
+    pub cv1: G1Wrapper,
+    /// Commitment to v2 (cumulative weight including receiver)
+    pub cv2: G1Wrapper,
+    /// Blinded sender public key pk_star = G^{sk} * H^{r_star}
+    pub pk_star: G3Wrapper,
+    /// Blinded receiver public key pk_r_star = pk_r * H^{r_r_star}
+    pub pk_r_star: G3Wrapper,
 }
 
 /// Packet ID (identifies the packet/user)
@@ -240,7 +314,7 @@ pub struct Message {
     /// Initial diversified public key from Spawn
     pub ppk_0: DiversifiedPublicKey,
     /// Initial proof from Spawn
-    pub pi_0: Proof,
+    pub pi_0: HopProofs,
 }
 
 impl Message {

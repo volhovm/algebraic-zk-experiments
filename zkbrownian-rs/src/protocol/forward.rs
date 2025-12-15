@@ -4,7 +4,6 @@
 
 use crate::crypto::{compute_prf, diversify_with_diversifier, extract_routing_value, PoseidonHash};
 use crate::protocol::routing::WeightMatrix;
-use crate::protocol::verify::verify;
 #[cfg(test)]
 use crate::proving::circuits::mock_groth16_proof;
 use crate::proving::circuits::{
@@ -484,6 +483,19 @@ fn select_next_hop_from_view(
     ))
 }
 
+/// Type alias for the complex return type of generate_forward_proof
+type ForwardProofResult = (
+    HopProofs,
+    G1Wrapper,
+    G1Wrapper,
+    G1Wrapper,
+    G1Wrapper,
+    G1Wrapper,
+    G1Wrapper,
+    G3Wrapper,
+    G3Wrapper,
+);
+
 /// Forward function: Forward(user_view, m) -> (m', k_R, d)
 ///
 /// Takes a message and forwards it to the next hop, generating a proof
@@ -557,7 +569,7 @@ pub fn forward<R: Rng>(
 
     // Step 6: Generate proof π_{ν+1}
     // Uses precomputed proofs for π_1, π_2, π_3 and generates fresh π_4_g1, π_4_g2
-    let pi_nu_plus_1 = generate_forward_proof(
+    let (pi_nu_plus_1, c11, c12, c21, c22, cv1, cv2, pk_star, pk_r_star) = generate_forward_proof(
         pp,
         &user_view.public_key,
         &user_view.secret_key,
@@ -581,31 +593,42 @@ pub fn forward<R: Rng>(
         ppk: ppk_nu_plus_1,
         phi: phi_nu_plus_1,
         pi: pi_nu_plus_1,
+        c11,
+        c12,
+        c21,
+        c22,
+        cv1,
+        cv2,
+        pk_star,
+        pk_r_star,
     });
 
     Ok((new_message, k_r, d))
 }
 
-/// Rerandomize π_1 (sender membership proof) with new randomness
+/// Rerandomize a merkle membership proof (π_1 or π_3) with new randomness
 ///
-/// Takes precomputed proofs with dual commitments C11/C12 (where r1=0) and rerandomizes them
-/// with fresh randomness r1_new.
+/// This function handles both sender membership (π_1) and receiver membership (π_3) proofs,
+/// as they share the same circuit structure and rerandomization logic.
+///
+/// Takes precomputed proofs with dual commitments (merkle/weight circuit bases) and
+/// rerandomizes them with fresh randomness.
 ///
 /// # Arguments
 /// * `pp` - Public parameters
-/// * `pi_1_precomputed` - Precomputed Groth16 proof
-/// * `c11_precomputed` - Precomputed commitment C11 (merkle circuit bases) with r1=0
-/// * `c12_precomputed` - Precomputed commitment C12 (weight circuit bases) with r1=0
-/// * `r1_new` - New randomness for rerandomization
+/// * `pi_precomputed` - Precomputed Groth16 proof
+/// * `c1_precomputed` - Precomputed commitment using merkle circuit bases (with r=0)
+/// * `c2_precomputed` - Precomputed commitment using weight circuit bases (with r=0)
+/// * `r_new` - New randomness for rerandomization
 ///
 /// # Returns
-/// (rerandomized_proof, new_c11, new_c12)
-fn adjust_groth16_1(
+/// (rerandomized_proof, new_c1, new_c2)
+fn adjust_groth16_merkle_membership(
     pp: &PublicParams,
-    pi_1_precomputed: &ProofGroth16,
-    c11_precomputed: G1Projective,
-    c12_precomputed: G1Projective,
-    r1_new: ScalarField,
+    pi_precomputed: &ProofGroth16,
+    c1_precomputed: G1Projective,
+    c2_precomputed: G1Projective,
+    r_new: ScalarField,
 ) -> ProtocolResult<(ProofGroth16, G1Projective, G1Projective)> {
     use crate::proving::groth16::Groth16;
     use ark_ec::AffineRepr;
@@ -621,89 +644,29 @@ fn adjust_groth16_1(
         r2 = ScalarField::rand(&mut rng);
     }
 
-    // For pi_1, the input is (c11, merkle_root)
-    // We only rerandomize c11, not merkle_root (it's a scalar)
-    // The commitment randomness is just r1_new (only one commitment)
-    let com_rs = vec![r1_new];
+    // For merkle membership proofs, the input is (c1, merkle_root)
+    // We only rerandomize c1, not merkle_root (it's a scalar)
+    // The commitment randomness is just r_new (only one commitment)
+    let com_rs = vec![r_new];
 
     // Rerandomize the proof
-    let pi_1_new = Groth16::<PairingEngine>::rerandomize_proof_raw(
+    let pi_new = Groth16::<PairingEngine>::rerandomize_proof_raw(
         &pp.pk_merkle_membership.vk,
-        pi_1_precomputed,
+        pi_precomputed,
         r1,
         r2,
         &com_rs,
     );
 
-    // Rerandomize c11 using delta_g1 from the merkle membership circuit
+    // Rerandomize c1 using delta_g1 from the merkle membership circuit
     let delta_g1_merkle = pp.pk_merkle_membership.vk.delta_g1;
-    let c11_new = c11_precomputed + delta_g1_merkle.mul_bigint(r1_new.into_bigint());
+    let c1_new = c1_precomputed + delta_g1_merkle.mul_bigint(r_new.into_bigint());
 
-    // Rerandomize c12 using delta_g1 from the weight circuit
+    // Rerandomize c2 using delta_g1 from the weight circuit
     let delta_g1_weight = pp.pk_weight_subtree.vk.delta_g1;
-    let c12_new = c12_precomputed + delta_g1_weight.mul_bigint(r1_new.into_bigint());
+    let c2_new = c2_precomputed + delta_g1_weight.mul_bigint(r_new.into_bigint());
 
-    Ok((pi_1_new, c11_new, c12_new))
-}
-
-/// Rerandomize π_3 (receiver membership proof) with new randomness
-///
-/// Takes precomputed proofs with dual commitments C21/C22 (where r2=0) and rerandomizes them
-/// with fresh randomness r2_new.
-///
-/// # Arguments
-/// * `pp` - Public parameters
-/// * `pi_3_precomputed` - Precomputed Groth16 proof
-/// * `c21_precomputed` - Precomputed commitment C21 (merkle circuit bases) with r2=0
-/// * `c22_precomputed` - Precomputed commitment C22 (weight circuit bases) with r2=0
-/// * `r2_new` - New randomness for rerandomization
-///
-/// # Returns
-/// (rerandomized_proof, new_c21, new_c22)
-fn adjust_groth16_3(
-    pp: &PublicParams,
-    pi_3_precomputed: &ProofGroth16,
-    c21_precomputed: G1Projective,
-    c22_precomputed: G1Projective,
-    r2_new: ScalarField,
-) -> ProtocolResult<(ProofGroth16, G1Projective, G1Projective)> {
-    use crate::proving::groth16::Groth16;
-    use ark_ec::AffineRepr;
-    use ark_ff::{PrimeField, Zero};
-    use ark_std::UniformRand;
-
-    // Generate randomness for proof rerandomization
-    let mut rng = rand::thread_rng();
-    let mut r1 = ScalarField::zero();
-    let mut r2 = ScalarField::zero();
-    while r1.is_zero() || r2.is_zero() {
-        r1 = ScalarField::rand(&mut rng);
-        r2 = ScalarField::rand(&mut rng);
-    }
-
-    // For pi_3, the input is (c21, merkle_root)
-    // We only rerandomize c21, not merkle_root (it's a scalar)
-    // The commitment randomness is just r2_new (only one commitment)
-    let com_rs = vec![r2_new];
-
-    // Rerandomize the proof
-    let pi_3_new = Groth16::<PairingEngine>::rerandomize_proof_raw(
-        &pp.pk_merkle_membership.vk,
-        pi_3_precomputed,
-        r1,
-        r2,
-        &com_rs,
-    );
-
-    // Rerandomize c21 using delta_g1 from the merkle membership circuit
-    let delta_g1_merkle = pp.pk_merkle_membership.vk.delta_g1;
-    let c21_new = c21_precomputed + delta_g1_merkle.mul_bigint(r2_new.into_bigint());
-
-    // Rerandomize c22 using delta_g1 from the weight circuit
-    let delta_g1_weight = pp.pk_weight_subtree.vk.delta_g1;
-    let c22_new = c22_precomputed + delta_g1_weight.mul_bigint(r2_new.into_bigint());
-
-    Ok((pi_3_new, c21_new, c22_new))
+    Ok((pi_new, c1_new, c2_new))
 }
 
 /// Rerandomize π_2 (weight subtree proof) with new randomness
@@ -805,7 +768,7 @@ fn generate_forward_proof(
     v1: u64,
     v2: u64,
     precompute: &LocalPrecompute,
-) -> ProtocolResult<Proof> {
+) -> ProtocolResult<ForwardProofResult> {
     // TODO: Full proof generation
     // For now, return a stub proof
 
@@ -892,7 +855,7 @@ fn generate_forward_proof(
         .ok_or(ProtocolError::InvalidWeightSelection)?;
 
     // Rerandomize π_1 (sender membership proof) - produces dual commitments C11, C12
-    let (pi_1, c11, c12) = adjust_groth16_1(
+    let (pi_1, c11, c12) = adjust_groth16_merkle_membership(
         pp,
         &precompute.pi_1_sender,
         precompute.c11_precomputed,
@@ -901,7 +864,7 @@ fn generate_forward_proof(
     )?;
 
     // Rerandomize π_3 (receiver membership proof) - produces dual commitments C21, C22
-    let (pi_3, c21, c22) = adjust_groth16_3(
+    let (pi_3, c21, c22) = adjust_groth16_merkle_membership(
         pp,
         &precompute.pi_3_receivers[neighbor_idx],
         precompute.c21_precomputed[neighbor_idx],
@@ -1079,42 +1042,25 @@ fn generate_forward_proof(
 
     let pi_4_g2 = prove_public_key_operations(&pk_ops_instance, &pk_ops_witness)?;
 
-    Ok(Proof {
+    let hop_proofs = HopProofs {
         pi_1,
         pi_2,
         pi_3,
         pi_4_g1,
         pi_4_g2,
-    })
-}
+    };
 
-/// Verify a batch of messages
-///
-/// This is a mock implementation that verifies each message individually.
-/// In a production system, this could be optimized using batch verification techniques
-/// for the underlying cryptographic primitives (e.g., batch Groth16 verification).
-///
-/// # Arguments
-/// * `messages` - Slice of messages to verify
-/// * `weight_commitment` - Committed weight matrix
-/// * `all_public_keys` - List of all node public keys
-///
-/// # Returns
-/// true if all messages are valid, false if any message is invalid
-pub fn verify_batch(
-    messages: &[Message],
-    weight_commitment: &WeightCommitment,
-    all_public_keys: &[PublicKey],
-) -> ProtocolResult<bool> {
-    for message in messages {
-        let hop_count = message.hop_count();
-        let is_valid = verify(message, hop_count, weight_commitment, all_public_keys)?;
-        if !is_valid {
-            return Ok(false);
-        }
-    }
-
-    Ok(true)
+    Ok((
+        hop_proofs,
+        G1Wrapper(c11.into_affine()),
+        G1Wrapper(c12.into_affine()),
+        G1Wrapper(c21.into_affine()),
+        G1Wrapper(c22.into_affine()),
+        G1Wrapper(c_v1.into_affine()),
+        G1Wrapper(c_v2.into_affine()),
+        G3Wrapper(pk_star),
+        G3Wrapper(pk_r_star),
+    ))
 }
 
 #[cfg(test)]
@@ -1196,7 +1142,7 @@ mod tests {
                 phi: PrfOutput {
                     phi: G1Projective::generator().into_affine(),
                 },
-                pi: Proof {
+                pi: HopProofs {
                     pi_1: mock_groth16_proof(),
                     pi_2: mock_groth16_proof(),
                     pi_3: mock_groth16_proof(),
@@ -1209,6 +1155,14 @@ mod tests {
                         _phantom: std::marker::PhantomData,
                     },
                 },
+                c11: G1Wrapper(G1Projective::generator().into_affine()),
+                c12: G1Wrapper(G1Projective::generator().into_affine()),
+                c21: G1Wrapper(G1Projective::generator().into_affine()),
+                c22: G1Wrapper(G1Projective::generator().into_affine()),
+                cv1: G1Wrapper(G1Projective::generator().into_affine()),
+                cv2: G1Wrapper(G1Projective::generator().into_affine()),
+                pk_star: G3Wrapper(user_0_view.public_key.pk),
+                pk_r_star: G3Wrapper(user_0_view.public_key.pk),
             });
         }
 

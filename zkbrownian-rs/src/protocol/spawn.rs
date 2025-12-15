@@ -80,11 +80,11 @@ fn generate_spawn_proof(
     _pid: PacketId,
     _sid: SessionId,
     _ppk_0: &DiversifiedPublicKey,
-) -> ProtocolResult<Proof> {
+) -> ProtocolResult<HopProofs> {
     // TODO: Full proof generation
     // For now, return stub
 
-    Ok(Proof {
+    Ok(HopProofs {
         pi_1: mock_groth16_proof(),
         pi_2: mock_groth16_proof(),
         pi_3: mock_groth16_proof(),

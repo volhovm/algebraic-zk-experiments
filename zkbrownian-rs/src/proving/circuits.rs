@@ -81,6 +81,23 @@ pub fn prove_merkle_membership(
     Ok(mock_groth16_proof())
 }
 
+/// Verify merkle membership proof (π_1 for sender or π_3 for receiver)
+///
+/// # Arguments
+/// * `proof` - Groth16 proof to verify
+/// * `instance` - Public inputs (C, merkle_root)
+///
+/// # Returns
+/// true if proof is valid, false otherwise
+pub fn verify_merkle_membership(
+    _proof: &ProofGroth16,
+    _instance: &MerkleMembershipInstance,
+) -> ProtocolResult<bool> {
+    // TODO: Actual Groth16 proof verification
+    // For now, stub returns true
+    Ok(true)
+}
+
 // Legacy aliases for backward compatibility during transition
 pub type SenderMembershipInstance = MerkleMembershipInstance;
 pub type SenderMembershipWitness = MerkleMembershipWitness;
@@ -176,6 +193,23 @@ pub fn prove_weight_subtree(
     // TODO: Actual Groth16 proof generation
     // For now, return mock proof with random elements
     Ok(mock_groth16_proof())
+}
+
+/// Verify weight subtree proof (π_2)
+///
+/// # Arguments
+/// * `proof` - Groth16 proof to verify
+/// * `instance` - Public inputs (C1, C2, C_v1, C_v2)
+///
+/// # Returns
+/// true if proof is valid, false otherwise
+pub fn verify_weight_subtree(
+    _proof: &ProofGroth16,
+    _instance: &WeightSubtreeInstance,
+) -> ProtocolResult<bool> {
+    // TODO: Actual Groth16 proof verification
+    // For now, stub returns true
+    Ok(true)
 }
 
 // =============================================================================
@@ -300,6 +334,23 @@ pub fn prove_schnorr_bridging(
     })
 }
 
+/// Verify Schnorr bridging proof π_{4,G1}
+///
+/// # Arguments
+/// * `proof` - Schnorr proof to verify
+/// * `instance` - Public inputs (coordinate commitments and other commitments)
+///
+/// # Returns
+/// true if proof is valid, false otherwise
+pub fn verify_schnorr_bridging(
+    _proof: &Schnorr<G1>,
+    _instance: &SchnorrBridgingInstance,
+) -> ProtocolResult<bool> {
+    // TODO: Actual Schnorr proof verification
+    // For now, stub returns true
+    Ok(true)
+}
+
 // =============================================================================
 // π_{4,G2}: Public Key Operations Proof
 // =============================================================================
@@ -369,6 +420,23 @@ pub fn prove_public_key_operations(
         data: vec![0u8; 32],
         _phantom: std::marker::PhantomData,
     })
+}
+
+/// Verify public key operations proof π_{4,G2}
+///
+/// # Arguments
+/// * `proof` - Schnorr proof to verify
+/// * `instance` - Public inputs (blinded keys, diversified keys, hash commitments)
+///
+/// # Returns
+/// true if proof is valid, false otherwise
+pub fn verify_public_key_operations(
+    _proof: &Schnorr<G3>,
+    _instance: &PublicKeyOperationsInstance,
+) -> ProtocolResult<bool> {
+    // TODO: Actual Schnorr proof verification
+    // For now, stub returns true
+    Ok(true)
 }
 
 // =============================================================================
