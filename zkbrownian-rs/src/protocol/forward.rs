@@ -4,6 +4,7 @@
 
 use crate::crypto::{compute_prf, diversify_with_diversifier, extract_routing_value, PoseidonHash};
 use crate::protocol::routing::WeightMatrix;
+use crate::protocol::verify::verify;
 #[cfg(test)]
 use crate::proving::circuits::mock_groth16_proof;
 use crate::proving::circuits::{
@@ -145,10 +146,7 @@ fn generate_precompute(
         + (g4_base_proj * r1);
 
     // Generate π_1: Sender membership proof
-    let sender_instance = SenderMembershipInstance {
-        c1: c1.clone(),
-        merkle_root,
-    };
+    let sender_instance = SenderMembershipInstance { c1, merkle_root };
     let sender_witness = SenderMembershipWitness {
         pk_x: pk_x_scalar,
         pk_y: pk_y_scalar,
@@ -183,10 +181,7 @@ fn generate_precompute(
             + (g4_base_proj * r2);
 
         // Generate π_3: Receiver membership proof
-        let receiver_instance = ReceiverMembershipInstance {
-            c2: c2.clone(),
-            merkle_root,
-        };
+        let receiver_instance = ReceiverMembershipInstance { c2, merkle_root };
         let receiver_witness = ReceiverMembershipWitness {
             pk_r_x: pk_r_x_scalar,
             pk_r_y: pk_r_y_scalar,
@@ -210,12 +205,7 @@ fn generate_precompute(
         let c_v1 = (g1_base_proj * ScalarField::from(v1)) + (g2_base_proj * r_v1);
         let c_v2 = (g1_base_proj * ScalarField::from(v2)) + (g2_base_proj * r_v2);
 
-        let weight_instance = WeightSubtreeInstance {
-            c1: c1.clone(),
-            c2: c2.clone(),
-            c_v1: c_v1.clone(),
-            c_v2: c_v2.clone(),
-        };
+        let weight_instance = WeightSubtreeInstance { c1, c2, c_v1, c_v2 };
         let weight_witness = WeightSubtreeWitness {
             pk_x: pk_x_scalar,
             pk_y: pk_y_scalar,
@@ -606,7 +596,7 @@ fn generate_forward_proof(
         .neighbors
         .iter()
         .find(|n| n.index == k_r)
-        .ok_or_else(|| ProtocolError::InvalidWeightSelection)?;
+        .ok_or(ProtocolError::InvalidWeightSelection)?;
 
     // Extract receiver's public key coordinates and convert to BLS12-381 scalar field
     let pk_r_x_scalar =
@@ -642,7 +632,7 @@ fn generate_forward_proof(
         .neighbors
         .iter()
         .position(|n| n.index == k_r)
-        .ok_or_else(|| ProtocolError::InvalidWeightSelection)?;
+        .ok_or(ProtocolError::InvalidWeightSelection)?;
 
     // Use precomputed π_3 (receiver membership proof)
     let pi_3 = precompute.pi_3_receivers[neighbor_idx].clone();
@@ -713,10 +703,10 @@ fn generate_forward_proof(
     let schnorr_instance = SchnorrBridgingInstance {
         pk_star_coord,
         pk_r_star_coord,
-        c1: c1.clone(),
-        c2: c2.clone(),
-        c_v1: c_v1.clone(),
-        c_v2: c_v2.clone(),
+        c1,
+        c2,
+        c_v1,
+        c_v2,
         g_rho,
     };
 
@@ -780,6 +770,35 @@ fn generate_forward_proof(
         pi_4_g1,
         pi_4_g2,
     })
+}
+
+/// Verify a batch of messages
+///
+/// This is a mock implementation that verifies each message individually.
+/// In a production system, this could be optimized using batch verification techniques
+/// for the underlying cryptographic primitives (e.g., batch Groth16 verification).
+///
+/// # Arguments
+/// * `messages` - Slice of messages to verify
+/// * `weight_commitment` - Committed weight matrix
+/// * `all_public_keys` - List of all node public keys
+///
+/// # Returns
+/// true if all messages are valid, false if any message is invalid
+pub fn verify_batch(
+    messages: &[Message],
+    weight_commitment: &WeightCommitment,
+    all_public_keys: &[PublicKey],
+) -> ProtocolResult<bool> {
+    for message in messages {
+        let hop_count = message.hop_count();
+        let is_valid = verify(message, hop_count, weight_commitment, all_public_keys)?;
+        if !is_valid {
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
 }
 
 #[cfg(test)]

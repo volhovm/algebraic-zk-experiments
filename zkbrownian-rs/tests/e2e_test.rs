@@ -9,7 +9,7 @@
 use rand::thread_rng;
 use std::time::Instant;
 use zkbrownian::protocol::{
-    forward, generate_random_state, spawn, verify, BulletinBoard, BulletinBoardEntry,
+    forward, generate_random_state, spawn, verify, verify_batch, BulletinBoard, BulletinBoardEntry,
     InMemoryBulletinBoard,
 };
 use zkbrownian::types::{PublicKey, PublicParams, WeightCommitment};
@@ -152,6 +152,28 @@ fn test_basic_forward_protocol() {
         );
     }
 
+    // Step 7: Batch verify all messages on the bulletin board
+    println!("\n\nStep 7: Batch verifying all bulletin board messages...");
+    let messages_to_verify: Vec<_> = all_messages
+        .iter()
+        .map(|entry| entry.message.clone())
+        .collect();
+
+    let verification_start = Instant::now();
+    let all_valid = verify_batch(&messages_to_verify, &weight_commitment, &all_public_keys)
+        .expect("Batch verification error");
+    let verification_elapsed = verification_start.elapsed();
+
+    println!(
+        "  ✓ Batch verified {} messages in {:.2} ms ({:.2} ms per message)",
+        messages_to_verify.len(),
+        verification_elapsed.as_secs_f64() * 1000.0,
+        verification_elapsed.as_secs_f64() * 1000.0 / messages_to_verify.len() as f64
+    );
+    println!("  All messages valid: {}", all_valid);
+
+    assert!(all_valid, "All messages should be valid");
+
     println!("\n=== Test Complete ===");
 }
 
@@ -201,8 +223,7 @@ fn test_full_protocol() {
     // users_packets[user_idx] contains all packets spawned by that user
     let mut users_packets: Vec<Vec<_>> = vec![Vec::new(); num_nodes];
 
-    for user_idx in 0..num_nodes {
-        let user_view = &generated_state.users_view[user_idx];
+    for (user_idx, user_view) in generated_state.users_view.iter().enumerate() {
         let session_id = 1000 + user_idx;
 
         for packet_id in 0..NUM_PACKETS_PER_USER {
@@ -227,6 +248,21 @@ fn test_full_protocol() {
     // Step 5: Forward messages through TTL rounds
     println!("\nStep 4: Forwarding packets through {} TTL rounds...", TTL);
 
+    // Prepare data for verification
+    let all_public_keys: Vec<PublicKey> = generated_state
+        .users_view
+        .iter()
+        .map(|user_view| user_view.public_key.clone())
+        .collect();
+
+    let weight_commitment = WeightCommitment {
+        commitment: vec![],
+        metadata: vec![],
+    };
+
+    let mut total_verifications = 0;
+    let mut total_verification_time = 0.0;
+
     for ttl_round in 0..TTL {
         println!("\n=== TTL Round {} ===", ttl_round);
 
@@ -241,8 +277,30 @@ fn test_full_protocol() {
         }
 
         // Process each user's packets sequentially
-        for user_idx in 0..num_nodes {
-            for (message, _origin_user) in messages_to_forward[user_idx].drain(..) {
+        for (user_idx, user_messages) in messages_to_forward.iter_mut().enumerate() {
+            let messages_for_user: Vec<_> =
+                user_messages.iter().map(|(msg, _)| msg.clone()).collect();
+
+            // Step 1: User receives messages - batch verify them
+            if !messages_for_user.is_empty() {
+                let verify_start = Instant::now();
+                let all_valid =
+                    verify_batch(&messages_for_user, &weight_commitment, &all_public_keys)
+                        .expect("Batch verification error");
+                let verify_elapsed = verify_start.elapsed();
+
+                assert!(
+                    all_valid,
+                    "User {} received invalid messages in round {}",
+                    user_idx, ttl_round
+                );
+
+                total_verifications += messages_for_user.len();
+                total_verification_time += verify_elapsed.as_secs_f64() * 1000.0;
+            }
+
+            // Step 2 & 3: User forwards the verified messages
+            for (message, _origin_user) in user_messages.drain(..) {
                 let current_user_view = &generated_state.users_view[user_idx];
 
                 // Forward the message
@@ -278,6 +336,19 @@ fn test_full_protocol() {
             }
         );
     }
+
+    // Print verification statistics
+    println!("\n=== Verification Summary ===");
+    println!("  Total messages verified: {}", total_verifications);
+    println!(
+        "  Total verification time: {:.2} ms ({:.2} ms per message)",
+        total_verification_time,
+        if total_verifications > 0 {
+            total_verification_time / total_verifications as f64
+        } else {
+            0.0
+        }
+    );
 
     // Step 6: Summary
     println!("\n=== Protocol Summary ===");
