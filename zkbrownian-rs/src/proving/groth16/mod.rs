@@ -48,7 +48,7 @@ impl<E: Pairing, QAP: R1CSToQAP> SNARK<E::ScalarField> for Groth16<E, QAP> {
     type ProcessedVerifyingKey = PreparedVerifyingKey<E>;
     type Error = SynthesisError;
 
-    fn circuit_specific_setup<C: ConstraintSynthesizer<E::ScalarField>, R: RngCore>(
+    fn circuit_specific_setup<C, R>(
         circuit: C,
         rng: &mut R,
     ) -> Result<(Self::ProvingKey, Self::VerifyingKey), Self::Error>
@@ -81,7 +81,7 @@ impl<E: Pairing, QAP: R1CSToQAP> SNARK<E::ScalarField> for Groth16<E, QAP> {
         x: &[E::ScalarField],
         proof: &Self::Proof,
     ) -> Result<bool, Self::Error> {
-        Ok(Self::verify_proof(&circuit_pvk, proof, 0, &[], &x)?)
+        Self::verify_proof(circuit_pvk, proof, 0, &[], x)
     }
 }
 

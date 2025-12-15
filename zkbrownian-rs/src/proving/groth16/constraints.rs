@@ -330,7 +330,7 @@ where
             let pvk = pvk.borrow();
             let alpha_g1_beta_g2 = P::GTVar::new_variable(
                 ark_relations::ns!(cs, "alpha_g1_beta_g2"),
-                || Ok(pvk.alpha_g1_beta_g2.clone()),
+                || Ok(pvk.alpha_g1_beta_g2),
                 mode,
             )?;
 
@@ -518,18 +518,18 @@ mod test {
         c.mul_assign(&b);
 
         let circ = Circuit {
-            a: Some(a.clone()),
-            b: Some(b.clone()),
+            a: Some(a),
+            b: Some(b),
             num_constraints: 100,
             num_variables: 25,
         };
 
         let (pk, vk) = TestSNARK::circuit_specific_setup(circ, &mut rng).unwrap();
 
-        let proof = TestSNARK::prove(&pk, circ.clone(), &mut rng).unwrap();
+        let proof = TestSNARK::prove(&pk, circ, &mut rng).unwrap();
 
         assert!(
-            TestSNARK::verify(&vk, &vec![c], &proof).unwrap(),
+            TestSNARK::verify(&vk, &[c], &proof).unwrap(),
             "The native verification check fails."
         );
 

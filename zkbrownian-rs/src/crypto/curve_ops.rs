@@ -50,7 +50,6 @@ pub fn check_diversified_ownership(sk: &SecretKey, ppk: &DiversifiedPublicKey) -
 }
 
 /// Scalar field operations
-
 /// Compute modular inverse in scalar field
 /// Returns 1/x
 pub fn scalar_inverse(x: &ScalarField) -> Option<ScalarField> {

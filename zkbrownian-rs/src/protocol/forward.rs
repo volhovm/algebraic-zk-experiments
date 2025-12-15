@@ -526,6 +526,7 @@ pub fn forward<R: Rng>(
 /// and generates fresh proofs for:
 /// - π_{4,G1}: Schnorr bridging
 /// - π_{4,G2}: Public key operations
+#[allow(clippy::too_many_arguments)]
 fn generate_forward_proof(
     pp: &PublicParams,
     pk: &PublicKey,

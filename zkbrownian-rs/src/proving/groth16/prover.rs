@@ -62,6 +62,7 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
     }
 
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     pub fn create_proof_with_assignment(
         pk: &ProvingKey<E>,
         r: E::ScalarField,
@@ -239,9 +240,7 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
 
         let com_size_total: usize = com_sizes.iter().sum();
 
-        let com_r_sum: E::ScalarField = com_r
-            .into_iter()
-            .fold(E::ScalarField::from(0u32), |x, y| x + y);
+        let com_r_sum: E::ScalarField = com_r.iter().fold(E::ScalarField::from(0u32), |x, y| x + y);
 
         let com_assignment = &prover.instance_assignment().unwrap()[1..1 + com_size_total];
         let instance_assignment = &prover.instance_assignment().unwrap()[1 + com_size_total..];
@@ -252,9 +251,9 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
             s,
             &com_r_sum,
             &h,
-            &com_assignment,
-            &instance_assignment,
-            &prover.witness_assignment().unwrap(),
+            com_assignment,
+            instance_assignment,
+            prover.witness_assignment().unwrap(),
         )?;
 
         let commitments = {
