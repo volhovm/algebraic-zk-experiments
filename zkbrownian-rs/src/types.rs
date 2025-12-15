@@ -10,6 +10,64 @@ pub use crate::crypto::curve::{
     G3 as GrumpkinPoint,
 };
 
+/// Wrapper type for G1 to enable Serde serialization
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct G1Wrapper(pub G1);
+
+impl Serialize for G1Wrapper {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut bytes = Vec::new();
+        self.0
+            .serialize_compressed(&mut bytes)
+            .map_err(|e| serde::ser::Error::custom(format!("Serialization error: {}", e)))?;
+        serializer.serialize_bytes(&bytes)
+    }
+}
+
+impl<'de> Deserialize<'de> for G1Wrapper {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        let g1 = G1::deserialize_compressed(&bytes[..])
+            .map_err(|e| DeError::custom(format!("Deserialization error: {}", e)))?;
+        Ok(G1Wrapper(g1))
+    }
+}
+
+/// Wrapper type for G3 to enable Serde serialization
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct G3Wrapper(pub G3);
+
+impl Serialize for G3Wrapper {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut bytes = Vec::new();
+        self.0
+            .serialize_compressed(&mut bytes)
+            .map_err(|e| serde::ser::Error::custom(format!("Serialization error: {}", e)))?;
+        serializer.serialize_bytes(&bytes)
+    }
+}
+
+impl<'de> Deserialize<'de> for G3Wrapper {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        let g3 = G3::deserialize_compressed(&bytes[..])
+            .map_err(|e| DeError::custom(format!("Deserialization error: {}", e)))?;
+        Ok(G3Wrapper(g3))
+    }
+}
+
 /// Secret key (scalar in the field)
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct SecretKey {
@@ -137,15 +195,78 @@ impl<'de> Deserialize<'de> for PrfOutput {
     }
 }
 
-/// Proof component (stub for now, will be expanded)
+/// Groth16 proof type alias
+pub type ProofGroth16 = crate::proving::groth16::Proof<crate::crypto::curve::PairingEngine>;
+
+// Serde implementations for ProofGroth16 using ark_serialize
+impl Serialize for ProofGroth16 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut bytes = Vec::new();
+        self.serialize_compressed(&mut bytes)
+            .map_err(|e| serde::ser::Error::custom(format!("Serialization error: {}", e)))?;
+        serializer.serialize_bytes(&bytes)
+    }
+}
+
+impl<'de> Deserialize<'de> for ProofGroth16 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        ProofGroth16::deserialize_compressed(&bytes[..])
+            .map_err(|e| DeError::custom(format!("Deserialization error: {}", e)))
+    }
+}
+
+/// Schnorr proof stub (generic over group type)
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+pub struct Schnorr<G: Send + Sync> {
+    /// Stub data for Schnorr proof
+    pub data: Vec<u8>,
+    /// Phantom data for group type
+    #[doc(hidden)]
+    pub _phantom: std::marker::PhantomData<G>,
+}
+
+impl<G: Send + Sync> Serialize for Schnorr<G> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.data.serialize(serializer)
+    }
+}
+
+impl<'de, G: Send + Sync> Deserialize<'de> for Schnorr<G> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let data = Vec::<u8>::deserialize(deserializer)?;
+        Ok(Schnorr {
+            data,
+            _phantom: std::marker::PhantomData,
+        })
+    }
+}
+
+/// Proof component
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize, Serialize, Deserialize)]
-pub struct Proof {
-    /// Groth16 proof elements
-    pub pi_1: Vec<u8>, // G1 proof
-    pub pi_2: Vec<u8>,    // G1 proof (weights)
-    pub pi_3: Vec<u8>,    // G1 proof
-    pub pi_4_g1: Vec<u8>, // Schnorr in G1
-    pub pi_4_g2: Vec<u8>, // Schnorr in G2
+pub struct HopProofs {
+    /// π_1: Sender membership proof (Groth16)
+    pub pi_1: ProofGroth16,
+    /// π_2: Weight subtree proof (Groth16)
+    pub pi_2: ProofGroth16,
+    /// π_3: Receiver membership proof (Groth16)
+    pub pi_3: ProofGroth16,
+    /// π_4_g1: Schnorr bridging proof in G1
+    pub pi_4_g1: Schnorr<G1>,
+    /// π_4_g2: Schnorr bridging proof in G3 (Grumpkin)
+    pub pi_4_g2: Schnorr<G3>,
 }
 
 /// A single hop in the message history
@@ -156,7 +277,23 @@ pub struct Hop {
     /// PRF output for this hop
     pub phi: PrfOutput,
     /// Proof of correct forwarding for this hop
-    pub pi: Proof,
+    pub pi: HopProofs,
+    /// Commitment to sender with merkle circuit bases (C11)
+    pub c11: G1Wrapper,
+    /// Commitment to sender with weight circuit bases (C12)
+    pub c12: G1Wrapper,
+    /// Commitment to receiver with merkle circuit bases (C21)
+    pub c21: G1Wrapper,
+    /// Commitment to receiver with weight circuit bases (C22)
+    pub c22: G1Wrapper,
+    /// Commitment to v1 (cumulative weight before receiver)
+    pub cv1: G1Wrapper,
+    /// Commitment to v2 (cumulative weight including receiver)
+    pub cv2: G1Wrapper,
+    /// Blinded sender public key pk_star = G^{sk} * H^{r_star}
+    pub pk_star: G3Wrapper,
+    /// Blinded receiver public key pk_r_star = pk_r * H^{r_r_star}
+    pub pk_r_star: G3Wrapper,
 }
 
 /// Packet ID (identifies the packet/user)
@@ -177,7 +314,7 @@ pub struct Message {
     /// Initial diversified public key from Spawn
     pub ppk_0: DiversifiedPublicKey,
     /// Initial proof from Spawn
-    pub pi_0: Proof,
+    pub pi_0: HopProofs,
 }
 
 impl Message {
@@ -222,14 +359,62 @@ pub struct PublicParams {
     pub num_nodes: usize,
     /// Maximum out-degree
     pub max_out_degree: usize,
-    /// Generators for G1
-    pub g1_generators: Vec<G1>,
-    /// Generators for G3 (Grumpkin curve, used for public keys)
-    pub g3_generators: Vec<G3>,
-    /// Groth16 proving/verifying keys (stub)
-    pub groth16_params: Vec<u8>,
     /// Cryptographic generators for the protocol
     pub generators: crate::crypto::generators::Generators,
+    /// Groth16 proving key for merkle membership proof (π_1 and π_3)
+    /// Used for both sender and receiver membership proofs (same circuit, same CRS)
+    pub pk_merkle_membership: crate::proving::groth16::ProvingKey<PairingEngine>,
+    /// Groth16 proving key for weight subtree proof (π_2)
+    pub pk_weight_subtree: crate::proving::groth16::ProvingKey<PairingEngine>,
+}
+
+impl PublicParams {
+    /// Generate public parameters with Groth16 setup
+    ///
+    /// # Arguments
+    /// * `num_nodes` - Number of nodes in the network
+    /// * `max_out_degree` - Maximum out-degree for routing
+    /// * `rng` - Random number generator
+    ///
+    /// # Returns
+    /// Initialized PublicParams with proving keys
+    pub fn generate<R: rand::Rng + rand::CryptoRng>(
+        num_nodes: usize,
+        max_out_degree: usize,
+        rng: &mut R,
+    ) -> ProtocolResult<Self> {
+        use crate::proving::circuits::{MerkleMembershipCircuit, WeightSubtreeCircuit};
+        use crate::proving::groth16::Groth16;
+        use ark_crypto_primitives::snark::SNARK;
+
+        // Generate cryptographic generators
+        let generators = crate::crypto::generators::Generators::generate(rng, 10, 10, 10);
+
+        // Generate proving keys using circuit_specific_setup
+        // For merkle membership circuit (π_1 and π_3, shared circuit and CRS)
+        let merkle_circuit = MerkleMembershipCircuit::<ScalarField> {
+            _phantom: std::marker::PhantomData,
+        };
+        let (pk_merkle_membership, _vk) =
+            Groth16::<PairingEngine>::circuit_specific_setup(merkle_circuit, rng)
+                .map_err(|e| ProtocolError::CryptoError(format!("Setup failed: {:?}", e)))?;
+
+        // For weight subtree circuit (π_2)
+        let weight_circuit = WeightSubtreeCircuit::<ScalarField> {
+            _phantom: std::marker::PhantomData,
+        };
+        let (pk_weight_subtree, _vk) =
+            Groth16::<PairingEngine>::circuit_specific_setup(weight_circuit, rng)
+                .map_err(|e| ProtocolError::CryptoError(format!("Setup failed: {:?}", e)))?;
+
+        Ok(PublicParams {
+            num_nodes,
+            max_out_degree,
+            generators,
+            pk_merkle_membership,
+            pk_weight_subtree,
+        })
+    }
 }
 
 /// Sub-Merkle tree (M2) for a single user's weight distribution

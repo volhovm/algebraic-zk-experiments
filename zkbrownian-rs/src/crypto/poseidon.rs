@@ -8,15 +8,10 @@
 use crate::types::{PacketId, ScalarField, SessionId};
 
 /// Poseidon hash configuration (stub)
+#[derive(Default)]
 pub struct PoseidonConfig {
     // Round constants, MDS matrix, etc.
     // TODO: Implement proper Poseidon parameters for BLS12-381
-}
-
-impl Default for PoseidonConfig {
-    fn default() -> Self {
-        Self {}
-    }
 }
 
 /// Poseidon hasher

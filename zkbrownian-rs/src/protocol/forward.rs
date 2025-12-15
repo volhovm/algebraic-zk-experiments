@@ -4,6 +4,8 @@
 
 use crate::crypto::{compute_prf, diversify_with_diversifier, extract_routing_value, PoseidonHash};
 use crate::protocol::routing::WeightMatrix;
+#[cfg(test)]
+use crate::proving::circuits::mock_groth16_proof;
 use crate::proving::circuits::{
     prove_public_key_operations, prove_receiver_membership, prove_schnorr_bridging,
     prove_sender_membership, prove_weight_subtree, PublicKeyOperationsInstance,
@@ -41,6 +43,32 @@ pub struct NeighboursView {
     pub neighbors: Vec<NeighborInfo>,
 }
 
+/// Precomputed Groth16 proofs for forward function
+/// Contains proofs that can be rerandomized instead of computed from scratch
+#[derive(Clone, Debug)]
+pub struct LocalPrecompute {
+    /// π_1: Sender membership proof (for oneself)
+    pub pi_1_sender: ProofGroth16,
+    /// Precomputed commitment C11 (sender, with merkle circuit bases, r1=0)
+    pub c11_precomputed: G1Projective,
+    /// Precomputed commitment C12 (sender, with weight circuit bases, r1=0)
+    pub c12_precomputed: G1Projective,
+
+    /// π_3: Receiver membership proofs (one per neighbor)
+    pub pi_3_receivers: Vec<ProofGroth16>,
+    /// Precomputed commitments C21 for each neighbor (with merkle circuit bases, r2=0)
+    pub c21_precomputed: Vec<G1Projective>,
+    /// Precomputed commitments C22 for each neighbor (with weight circuit bases, r2=0)
+    pub c22_precomputed: Vec<G1Projective>,
+
+    /// π_2: Weight subtree proofs (one per neighbor)
+    pub pi_2_weights: Vec<ProofGroth16>,
+    /// Precomputed commitments C_v1 for each neighbor (with r_v1=0)
+    pub c_v1_precomputed: Vec<(G1Projective, u64)>, // (commitment, v1 value)
+    /// Precomputed commitments C_v2 for each neighbor (with r_v2=0)
+    pub c_v2_precomputed: Vec<(G1Projective, u64)>, // (commitment, v2 value)
+}
+
 /// A single user's complete view of the protocol
 #[derive(Clone, Debug)]
 pub struct UserView {
@@ -54,6 +82,8 @@ pub struct UserView {
     pub own_sub_merkle_root: ScalarField,
     /// User's merkle proof of inclusion in the main tree
     pub own_merkle_proof: Vec<ScalarField>,
+    /// Precomputed Groth16 proofs
+    pub precompute: LocalPrecompute,
 }
 
 /// Generated state bundle containing all protocol initialization data
@@ -66,20 +96,228 @@ pub struct GeneratedState {
     pub weight_matrix: WeightMatrix,
 }
 
+/// Generate precomputed Groth16 proofs for a user
+///
+/// Creates proofs that can be rerandomized during forward operations:
+/// - π_1: Sender membership proof (for the user)
+/// - π_3: Receiver membership proofs (one per neighbor)
+/// - π_2: Weight subtree proofs (one per neighbor)
+///
+/// # Arguments
+/// * `pp` - Public parameters
+/// * `user_view` - User's view containing their keys and neighbor information
+/// * `merkle_root` - Root of the global merkle tree
+///
+/// # Returns
+/// LocalPrecompute containing all precomputed proofs
+fn generate_precompute(
+    pp: &PublicParams,
+    pk: &PublicKey,
+    neighbours_view: &NeighboursView,
+    own_sub_merkle_root: ScalarField,
+    own_merkle_proof: &[ScalarField],
+    merkle_root: ScalarField,
+) -> ProtocolResult<LocalPrecompute> {
+    use ark_ff::{BigInteger, PrimeField};
+
+    // Get commitment bases from circuit verification keys
+    // For C11/C21 (merkle membership circuit)
+    let gamma_abc_merkle = &pp.pk_merkle_membership.vk.gamma_abc_g1;
+    if gamma_abc_merkle.len() < 4 {
+        return Err(ProtocolError::CryptoError(
+            "Merkle membership VK needs at least 4 gamma_abc_g1 elements".to_string(),
+        ));
+    }
+    let merkle_base_1 = G1Projective::from(gamma_abc_merkle[1]);
+    let merkle_base_2 = G1Projective::from(gamma_abc_merkle[2]);
+    let merkle_base_3 = G1Projective::from(gamma_abc_merkle[3]);
+
+    // For C12/C22 (weight subtree circuit)
+    let gamma_abc_weight = &pp.pk_weight_subtree.vk.gamma_abc_g1;
+    if gamma_abc_weight.len() < 4 {
+        return Err(ProtocolError::CryptoError(
+            "Weight subtree VK needs at least 4 gamma_abc_g1 elements".to_string(),
+        ));
+    }
+    let weight_base_1 = G1Projective::from(gamma_abc_weight[1]);
+    let weight_base_2 = G1Projective::from(gamma_abc_weight[2]);
+    let weight_base_3 = G1Projective::from(gamma_abc_weight[3]);
+
+    // Get randomness bases hs[0] and hs[1]
+    let h0 = pp
+        .generators
+        .h_commitment(0)
+        .ok_or_else(|| ProtocolError::CryptoError("Missing h_commitment[0]".to_string()))?;
+    let h1 = pp
+        .generators
+        .h_commitment(1)
+        .ok_or_else(|| ProtocolError::CryptoError("Missing h_commitment[1]".to_string()))?;
+    let h0_proj = G1Projective::from(*h0);
+    let h1_proj = G1Projective::from(*h1);
+
+    // Convert sender's public key to scalar field
+    let pk_x_scalar = ScalarField::from_le_bytes_mod_order(&pk.pk.x.into_bigint().to_bytes_le());
+    let pk_y_scalar = ScalarField::from_le_bytes_mod_order(&pk.pk.y.into_bigint().to_bytes_le());
+    let md_2_k_s = own_sub_merkle_root;
+
+    // Use zero blinding factor for precomputed proof
+    let r1 = ScalarField::from(0u32);
+
+    // Create dual commitments for sender
+    // C11 (sender, with merkle circuit bases)
+    let c11_precomputed = (merkle_base_1 * pk_x_scalar)
+        + (merkle_base_2 * pk_y_scalar)
+        + (merkle_base_3 * md_2_k_s)
+        + (h0_proj * r1);
+
+    // C12 (sender, with weight circuit bases)
+    let c12_precomputed = (weight_base_1 * pk_x_scalar)
+        + (weight_base_2 * pk_y_scalar)
+        + (weight_base_3 * md_2_k_s)
+        + (h1_proj * r1);
+
+    // Generate π_1: Sender membership proof (uses C11)
+    let sender_instance = SenderMembershipInstance {
+        c: c11_precomputed,
+        merkle_root,
+    };
+    let sender_witness = SenderMembershipWitness {
+        pk_x: pk_x_scalar,
+        pk_y: pk_y_scalar,
+        md_2: md_2_k_s,
+        r: r1,
+        merkle_proof: own_merkle_proof.to_vec(),
+    };
+    let pi_1_sender = prove_sender_membership(&sender_instance, &sender_witness)?;
+
+    // Generate π_3 and π_2 proofs for each neighbor
+    let mut pi_3_receivers = Vec::new();
+    let mut pi_2_weights = Vec::new();
+    let mut c21_precomputed_vec = Vec::new();
+    let mut c22_precomputed_vec = Vec::new();
+    let mut c_v1_precomputed_vec = Vec::new();
+    let mut c_v2_precomputed_vec = Vec::new();
+    let mut cumulative_weight = 0u64;
+
+    for neighbor in &neighbours_view.neighbors {
+        // Convert receiver's public key to scalar field
+        let pk_r_x_scalar = ScalarField::from_le_bytes_mod_order(
+            &neighbor.public_key.pk.x.into_bigint().to_bytes_le(),
+        );
+        let pk_r_y_scalar = ScalarField::from_le_bytes_mod_order(
+            &neighbor.public_key.pk.y.into_bigint().to_bytes_le(),
+        );
+        let md_2_k_r = neighbor.sub_merkle_root;
+
+        // Use zero blinding factor for precomputed proof
+        let r2 = ScalarField::from(0u32);
+
+        // Create dual commitments for receiver
+        // C21 (receiver, with merkle circuit bases)
+        let c21_precomputed = (merkle_base_1 * pk_r_x_scalar)
+            + (merkle_base_2 * pk_r_y_scalar)
+            + (merkle_base_3 * md_2_k_r)
+            + (h0_proj * r2);
+        c21_precomputed_vec.push(c21_precomputed);
+
+        // C22 (receiver, with weight circuit bases)
+        let c22_precomputed = (weight_base_1 * pk_r_x_scalar)
+            + (weight_base_2 * pk_r_y_scalar)
+            + (weight_base_3 * md_2_k_r)
+            + (h1_proj * r2);
+        c22_precomputed_vec.push(c22_precomputed);
+
+        // Generate π_3: Receiver membership proof (uses C21)
+        let receiver_instance = ReceiverMembershipInstance {
+            c: c21_precomputed,
+            merkle_root,
+        };
+        let receiver_witness = ReceiverMembershipWitness {
+            pk_x: pk_r_x_scalar,
+            pk_y: pk_r_y_scalar,
+            md_2: md_2_k_r,
+            r: r2,
+            merkle_proof: neighbor.merkle_proof.clone(),
+        };
+        let pi_3 = prove_receiver_membership(&receiver_instance, &receiver_witness)?;
+        pi_3_receivers.push(pi_3);
+
+        // Generate π_2: Weight subtree proof
+        // v1 is the cumulative weight up to (but not including) this neighbor
+        // v2 is the cumulative weight including this neighbor
+        let v1 = cumulative_weight;
+        let v2 = cumulative_weight + neighbor.weight as u64;
+        cumulative_weight = v2; // Update cumulative weight for next iteration
+
+        // Use zero blinding factors for precomputed proof
+        let r_v1 = ScalarField::from(0u32);
+        let r_v2 = ScalarField::from(0u32);
+
+        // Note: C_v1 and C_v2 use weight circuit bases (same as C12/C22)
+        let c_v1_precomputed = (weight_base_1 * ScalarField::from(v1)) + (h1_proj * r_v1);
+        let c_v2_precomputed = (weight_base_1 * ScalarField::from(v2)) + (h1_proj * r_v2);
+        c_v1_precomputed_vec.push((c_v1_precomputed, v1));
+        c_v2_precomputed_vec.push((c_v2_precomputed, v2));
+
+        let weight_instance = WeightSubtreeInstance {
+            c1: c12_precomputed, // Use C12 (sender with weight circuit bases)
+            c2: c22_precomputed, // Use C22 (receiver with weight circuit bases)
+            c_v1: c_v1_precomputed,
+            c_v2: c_v2_precomputed,
+        };
+        let weight_witness = WeightSubtreeWitness {
+            pk_x: pk_x_scalar,
+            pk_y: pk_y_scalar,
+            md_2_k_s,
+            r1,
+            pk_r_x: pk_r_x_scalar,
+            pk_r_y: pk_r_y_scalar,
+            md_2_k_r,
+            r2,
+            v1,
+            r_v1,
+            v2,
+            r_v2,
+            sub_merkle_proof_v1: vec![], // TODO: Generate actual sub-merkle proof
+            sub_merkle_proof_v2: vec![], // TODO: Generate actual sub-merkle proof
+        };
+        let pi_2 = prove_weight_subtree(&weight_instance, &weight_witness)?;
+        pi_2_weights.push(pi_2);
+    }
+
+    Ok(LocalPrecompute {
+        pi_1_sender,
+        c11_precomputed,
+        c12_precomputed,
+        pi_3_receivers,
+        c21_precomputed: c21_precomputed_vec,
+        c22_precomputed: c22_precomputed_vec,
+        pi_2_weights,
+        c_v1_precomputed: c_v1_precomputed_vec,
+        c_v2_precomputed: c_v2_precomputed_vec,
+    })
+}
+
 /// Generate initial protocol state with keys and weight commitments
 ///
 /// This function models the protocol initialization where:
 /// 1. Each user generates their pk/sk pair
 /// 2. Each user sets weights to their neighbors
 /// 3. All weights are committed globally via Merkle trees
+/// 4. Precomputed proofs are generated for each user
 ///
 /// # Arguments
+/// * `pp` - Public parameters
 /// * `num_users` - Number of users in the protocol
 /// * `rng` - Random number generator
 ///
 /// # Returns
 /// GeneratedState containing protocol state, keys, and weight matrix
-pub fn generate_state<R: Rng>(num_users: usize, rng: &mut R) -> GeneratedState {
+pub fn generate_random_state<R: Rng>(
+    pp: &PublicParams,
+    num_users: usize,
+    rng: &mut R,
+) -> GeneratedState {
     use crate::crypto::curve_ops::keygen;
     use crate::types::{MerkleTree, SubMerkleTree};
 
@@ -168,13 +406,28 @@ pub fn generate_state<R: Rng>(num_users: usize, rng: &mut R) -> GeneratedState {
             .get_proof(user_idx)
             .expect("Should have proof for own user");
 
+        // Create neighbors view
+        let neighbours_view = NeighboursView { neighbors };
+
+        // Generate precomputed proofs for this user
+        let precompute = generate_precompute(
+            pp,
+            &public_keys[user_idx],
+            &neighbours_view,
+            own_sub_merkle_root,
+            &own_merkle_proof,
+            merkle_tree.root,
+        )
+        .expect("Should generate precompute successfully");
+
         // Create user view
         let user_view = UserView {
             secret_key: secret_keys[user_idx].clone(),
             public_key: public_keys[user_idx].clone(),
-            neighbours_view: NeighboursView { neighbors },
+            neighbours_view,
             own_sub_merkle_root,
             own_merkle_proof,
+            precompute,
         };
 
         users_view.push(user_view);
@@ -229,6 +482,19 @@ fn select_next_hop_from_view(
         total_cumulative,
     ))
 }
+
+/// Type alias for the complex return type of generate_forward_proof
+type ForwardProofResult = (
+    HopProofs,
+    G1Wrapper,
+    G1Wrapper,
+    G1Wrapper,
+    G1Wrapper,
+    G1Wrapper,
+    G1Wrapper,
+    G3Wrapper,
+    G3Wrapper,
+);
 
 /// Forward function: Forward(user_view, m) -> (m', k_R, d)
 ///
@@ -302,8 +568,8 @@ pub fn forward<R: Rng>(
     let (ppk_nu_plus_1, _) = diversify_with_diversifier(&pk_nu_plus_1, &d);
 
     // Step 6: Generate proof π_{ν+1}
-    // TODO: Full proof generation using all five circuits
-    let pi_nu_plus_1 = generate_forward_proof(
+    // Uses precomputed proofs for π_1, π_2, π_3 and generates fresh π_4_g1, π_4_g2
+    let (pi_nu_plus_1, c11, c12, c21, c22, cv1, cv2, pk_star, pk_r_star) = generate_forward_proof(
         pp,
         &user_view.public_key,
         &user_view.secret_key,
@@ -318,6 +584,7 @@ pub fn forward<R: Rng>(
         &user_view.own_merkle_proof,
         v1,
         v2,
+        &user_view.precompute,
     )?;
 
     // Step 7: Create updated message m'
@@ -326,19 +593,155 @@ pub fn forward<R: Rng>(
         ppk: ppk_nu_plus_1,
         phi: phi_nu_plus_1,
         pi: pi_nu_plus_1,
+        c11,
+        c12,
+        c21,
+        c22,
+        cv1,
+        cv2,
+        pk_star,
+        pk_r_star,
     });
 
     Ok((new_message, k_r, d))
 }
 
+/// Rerandomize a merkle membership proof (π_1 or π_3) with new randomness
+///
+/// This function handles both sender membership (π_1) and receiver membership (π_3) proofs,
+/// as they share the same circuit structure and rerandomization logic.
+///
+/// Takes precomputed proofs with dual commitments (merkle/weight circuit bases) and
+/// rerandomizes them with fresh randomness.
+///
+/// # Arguments
+/// * `pp` - Public parameters
+/// * `pi_precomputed` - Precomputed Groth16 proof
+/// * `c1_precomputed` - Precomputed commitment using merkle circuit bases (with r=0)
+/// * `c2_precomputed` - Precomputed commitment using weight circuit bases (with r=0)
+/// * `r_new` - New randomness for rerandomization
+///
+/// # Returns
+/// (rerandomized_proof, new_c1, new_c2)
+fn adjust_groth16_merkle_membership(
+    pp: &PublicParams,
+    pi_precomputed: &ProofGroth16,
+    c1_precomputed: G1Projective,
+    c2_precomputed: G1Projective,
+    r_new: ScalarField,
+) -> ProtocolResult<(ProofGroth16, G1Projective, G1Projective)> {
+    use crate::proving::groth16::Groth16;
+    use ark_ec::AffineRepr;
+    use ark_ff::{PrimeField, Zero};
+    use ark_std::UniformRand;
+
+    // Generate randomness for proof rerandomization
+    let mut rng = rand::thread_rng();
+    let mut r1 = ScalarField::zero();
+    let mut r2 = ScalarField::zero();
+    while r1.is_zero() || r2.is_zero() {
+        r1 = ScalarField::rand(&mut rng);
+        r2 = ScalarField::rand(&mut rng);
+    }
+
+    // For merkle membership proofs, the input is (c1, merkle_root)
+    // We only rerandomize c1, not merkle_root (it's a scalar)
+    // The commitment randomness is just r_new (only one commitment)
+    let com_rs = vec![r_new];
+
+    // Rerandomize the proof
+    let pi_new = Groth16::<PairingEngine>::rerandomize_proof_raw(
+        &pp.pk_merkle_membership.vk,
+        pi_precomputed,
+        r1,
+        r2,
+        &com_rs,
+    );
+
+    // Rerandomize c1 using delta_g1 from the merkle membership circuit
+    let delta_g1_merkle = pp.pk_merkle_membership.vk.delta_g1;
+    let c1_new = c1_precomputed + delta_g1_merkle.mul_bigint(r_new.into_bigint());
+
+    // Rerandomize c2 using delta_g1 from the weight circuit
+    let delta_g1_weight = pp.pk_weight_subtree.vk.delta_g1;
+    let c2_new = c2_precomputed + delta_g1_weight.mul_bigint(r_new.into_bigint());
+
+    Ok((pi_new, c1_new, c2_new))
+}
+
+/// Rerandomize π_2 (weight subtree proof) with new randomness
+///
+/// Takes a precomputed proof with commitments C12, C22, C_v1, C_v2 (where all r=0)
+/// and rerandomizes them with fresh randomness.
+///
+/// # Arguments
+/// * `pp` - Public parameters
+/// * `pi_2_precomputed` - Precomputed Groth16 proof
+/// * `c12_precomputed` - Precomputed commitment C12 (sender in weight circuit bases)
+/// * `c22_precomputed` - Precomputed commitment C22 (receiver in weight circuit bases)
+/// * `c_v1_precomputed` - Precomputed commitment C_v1 with r_v1=0
+/// * `c_v2_precomputed` - Precomputed commitment C_v2 with r_v2=0
+/// * `r1_new` - New randomness for C12 (from sender rerandomization)
+/// * `r2_new` - New randomness for C22 (from receiver rerandomization)
+/// * `r_v1_new` - New randomness for C_v1
+/// * `r_v2_new` - New randomness for C_v2
+///
+/// # Returns
+/// (rerandomized_proof, new_c12, new_c22, new_c_v1, new_c_v2)
+#[allow(clippy::too_many_arguments)]
+fn adjust_groth16_weight_subtree(
+    pp: &PublicParams,
+    pi_2_precomputed: &ProofGroth16,
+    c_v1_precomputed: G1Projective,
+    c_v2_precomputed: G1Projective,
+    r1_new: ScalarField,
+    r2_new: ScalarField,
+    r_v1_new: ScalarField,
+    r_v2_new: ScalarField,
+) -> ProtocolResult<(ProofGroth16, G1Projective, G1Projective)> {
+    use crate::proving::groth16::Groth16;
+    use ark_ec::AffineRepr;
+    use ark_ff::{PrimeField, Zero};
+    use ark_std::UniformRand;
+
+    // Generate randomness for proof rerandomization
+    let mut rng = rand::thread_rng();
+    let mut r1 = ScalarField::zero();
+    let mut r2 = ScalarField::zero();
+    while r1.is_zero() || r2.is_zero() {
+        r1 = ScalarField::rand(&mut rng);
+        r2 = ScalarField::rand(&mut rng);
+    }
+
+    // For pi_2, the input is (c12, c22, c_v1, c_v2)
+    // All four are commitments that need to be rerandomized
+    // Randomness for each commitment
+    let com_rs = vec![r1_new, r2_new, r_v1_new, r_v2_new];
+
+    // Rerandomize the proof
+    let pi_2_new = Groth16::<PairingEngine>::rerandomize_proof_raw(
+        &pp.pk_weight_subtree.vk,
+        pi_2_precomputed,
+        r1,
+        r2,
+        &com_rs,
+    );
+
+    // Rerandomize all four commitments using delta_g1 from the weight subtree circuit
+    let delta_g1_weight = pp.pk_weight_subtree.vk.delta_g1;
+    let c_v1_new = c_v1_precomputed + delta_g1_weight.mul_bigint(r_v1_new.into_bigint());
+    let c_v2_new = c_v2_precomputed + delta_g1_weight.mul_bigint(r_v2_new.into_bigint());
+
+    Ok((pi_2_new, c_v1_new, c_v2_new))
+}
+
 /// Generate the forward proof π_{ν+1}
 ///
-/// Generates all five proof components:
-/// - π_1: Sender membership
-/// - π_2: Weight subtree
-/// - π_3: Receiver membership
+/// Uses precomputed proofs for π_1, π_2, π_3 (rerandomized Groth16 proofs)
+/// and generates fresh proofs for:
 /// - π_{4,G1}: Schnorr bridging
 /// - π_{4,G2}: Public key operations
+#[allow(clippy::too_many_arguments)]
 fn generate_forward_proof(
     pp: &PublicParams,
     pk: &PublicKey,
@@ -351,12 +754,45 @@ fn generate_forward_proof(
     _d: &Diversifier,
     neighbours_view: &NeighboursView,
     own_sub_merkle_root: ScalarField,
-    own_merkle_proof: &[ScalarField],
+    _own_merkle_proof: &[ScalarField],
     v1: u64,
     v2: u64,
-) -> ProtocolResult<Proof> {
+    precompute: &LocalPrecompute,
+) -> ProtocolResult<ForwardProofResult> {
     // TODO: Full proof generation
     // For now, return a stub proof
+
+    // This comment describes the dual commitment system that has been implemented:
+    //
+    // Instead of using generic bases (G1, G2, G3, G4) to create commitments c1, c2, cv1, cv2,
+    // we now create commitments using circuit-specific bases from Groth16 verification keys.
+    //
+    // WHY: Different Groth16 circuits (merkle membership vs weight subtree) have different
+    // verification keys with different gamma_abc_g1 bases. To prove statements across both
+    // circuits while maintaining consistency, we need dual commitments.
+    //
+    // IMPLEMENTATION:
+    // 1. Dual commitments for sender and receiver:
+    //    - C11: Sender commitment using pk_merkle_membership.vk.gamma_abc_g1[1,2,3] + hs[0]
+    //    - C12: Sender commitment using pk_weight_subtree.vk.gamma_abc_g1[1,2,3] + hs[1]
+    //    - C21: Receiver commitment using pk_merkle_membership.vk.gamma_abc_g1[1,2,3] + hs[0]
+    //    - C22: Receiver commitment using pk_weight_subtree.vk.gamma_abc_g1[1,2,3] + hs[1]
+    //    where hs[0] and hs[1] are independent randomness bases
+    //
+    // 2. Circuit consolidation:
+    //    - Merged pk_sender_membership and pk_receiver_membership into pk_merkle_membership
+    //    - Both sender and receiver use the same Groth16 circuit and CRS (same structure)
+    //
+    // 3. Commitment routing:
+    //    - C11, C21 → used in π_1 (sender membership) and π_3 (receiver membership), and π_4
+    //    - C12, C22 → used in π_2 (weight subtree), and π_4
+    //    - CV1, CV2 → used in π_2 and π_4 (with weight circuit bases)
+    //
+    // 4. Schnorr bridging proof (π_4):
+    //    - Now receives 4 commitments (C11, C12, C21, C22) instead of 2
+    //    - Must internally prove witness equality: C11 and C12 open to same sender values
+    //    - Must internally prove witness equality: C21 and C22 open to same receiver values
+    //    - See src/proving/circuits.rs::prove_schnorr_bridging for TODO on implementation
 
     // Get commitment generators from public parameters
     let g1_base = pp
@@ -379,117 +815,86 @@ fn generate_forward_proof(
     // Convert to projective for scalar multiplication
     let g1_base_proj = G1Projective::from(*g1_base);
     let g2_base_proj = G1Projective::from(*g2_base);
-    let g3_base_proj = G1Projective::from(*g3_base);
-    let g4_base_proj = G1Projective::from(*g4_base);
+    let _g3_base_proj = G1Projective::from(*g3_base);
+    let _g4_base_proj = G1Projective::from(*g4_base);
 
-    // Generate random blinding factors
-    let r1 = ScalarField::rand(&mut rand::thread_rng());
-    let r2 = ScalarField::rand(&mut rand::thread_rng());
-    let r_v1 = ScalarField::rand(&mut rand::thread_rng());
-    let r_v2 = ScalarField::rand(&mut rand::thread_rng());
+    // Implementation note: Only proofs π_4 and π_5 (Schnorr proofs) are freshly generated
+    // on each forward. Proofs π_1, π_2, π_3 are precomputed with zero randomness and then
+    // rerandomized here for privacy. This is more efficient than generating fresh proofs.
+    //
+    // The rerandomization process:
+    // 1. π_1: Rerandomize sender membership proof with fresh r1 (produces C11, C12)
+    // 2. π_3: Rerandomize receiver membership proof with fresh r2 (produces C21, C22)
+    // 3. π_2: Rerandomize weight subtree proof with fresh r_v1, r_v2
+    //
+    // The precomputed commitments use zero randomness (r=0), and we add fresh randomness
+    // during each forward operation to ensure unlinkability across hops.
 
-    // Extract sender's public key coordinates and convert to BLS12-381 scalar field
-    // Note: Converting Grumpkin field elements to BLS12-381 scalar field via BigInt
+    // Generate random blinding factors for rerandomization
+    let r1_new = ScalarField::rand(&mut rand::thread_rng());
+    let r2_new = ScalarField::rand(&mut rand::thread_rng());
+    let r_v1_new = ScalarField::rand(&mut rand::thread_rng());
+    let r_v2_new = ScalarField::rand(&mut rand::thread_rng());
+
+    // Find the neighbor index in the precompute arrays
+    // The neighbors in precompute are in the same order as in neighbours_view
+    let neighbor_idx = neighbours_view
+        .neighbors
+        .iter()
+        .position(|n| n.index == k_r)
+        .ok_or(ProtocolError::InvalidWeightSelection)?;
+
+    // Rerandomize π_1 (sender membership proof) - produces dual commitments C11, C12
+    let (pi_1, c11, c12) = adjust_groth16_merkle_membership(
+        pp,
+        &precompute.pi_1_sender,
+        precompute.c11_precomputed,
+        precompute.c12_precomputed,
+        r1_new,
+    )?;
+
+    // Rerandomize π_3 (receiver membership proof) - produces dual commitments C21, C22
+    let (pi_3, c21, c22) = adjust_groth16_merkle_membership(
+        pp,
+        &precompute.pi_3_receivers[neighbor_idx],
+        precompute.c21_precomputed[neighbor_idx],
+        precompute.c22_precomputed[neighbor_idx],
+        r2_new,
+    )?;
+
+    // Rerandomize π_2 (weight subtree proof) - uses C12 and C22
+    let (c_v1_precomputed, _v1_value) = precompute.c_v1_precomputed[neighbor_idx];
+    let (c_v2_precomputed, _v2_value) = precompute.c_v2_precomputed[neighbor_idx];
+
+    let (pi_2, c_v1, c_v2) = adjust_groth16_weight_subtree(
+        pp,
+        &precompute.pi_2_weights[neighbor_idx],
+        c_v1_precomputed,
+        c_v2_precomputed,
+        r1_new,
+        r2_new,
+        r_v1_new,
+        r_v2_new,
+    )?;
+
+    // Extract sender and receiver information for Schnorr proofs (π_4, π_5)
     use ark_ff::{BigInteger, PrimeField};
     let pk_x_scalar = ScalarField::from_le_bytes_mod_order(&pk.pk.x.into_bigint().to_bytes_le());
     let pk_y_scalar = ScalarField::from_le_bytes_mod_order(&pk.pk.y.into_bigint().to_bytes_le());
-
-    // Get sender's sub-merkle root (md_{2,k_s}) from user view
     let md_2_k_s = own_sub_merkle_root;
 
-    // Create commitment C1 = g1^{pk_x} * g2^{pk_y} * g3^{md_{2,k_s}} * g4^{r1}
-    let c1 = (g1_base_proj * pk_x_scalar)
-        + (g2_base_proj * pk_y_scalar)
-        + (g3_base_proj * md_2_k_s)
-        + (g4_base_proj * r1);
-
-    // Find the receiver in the neighbors view to get their public key
+    // Find the receiver in the neighbors view
     let receiver = neighbours_view
         .neighbors
         .iter()
         .find(|n| n.index == k_r)
-        .ok_or_else(|| ProtocolError::InvalidWeightSelection)?;
+        .ok_or(ProtocolError::InvalidWeightSelection)?;
 
-    // Extract receiver's public key coordinates and convert to BLS12-381 scalar field
     let pk_r_x_scalar =
         ScalarField::from_le_bytes_mod_order(&receiver.public_key.pk.x.into_bigint().to_bytes_le());
     let pk_r_y_scalar =
         ScalarField::from_le_bytes_mod_order(&receiver.public_key.pk.y.into_bigint().to_bytes_le());
-
-    // Get receiver's sub-merkle root (md_{2,k_r})
     let md_2_k_r = receiver.sub_merkle_root;
-
-    // Create commitment C2 = g1^{pk_{r,x}} * g2^{pk_{r,y}} * g3^{md_{2,k_r}} * g4^{r2}
-    let c2 = (g1_base_proj * pk_r_x_scalar)
-        + (g2_base_proj * pk_r_y_scalar)
-        + (g3_base_proj * md_2_k_r)
-        + (g4_base_proj * r2);
-
-    // Create commitments to v1 and v2
-    // C_{v1} = g1^{v1} * g2^{r_v1}
-    let c_v1 = (g1_base_proj * ScalarField::from(v1)) + (g2_base_proj * r_v1);
-
-    // C_{v2} = g1^{v2} * g2^{r_v2}
-    let c_v2 = (g1_base_proj * ScalarField::from(v2)) + (g2_base_proj * r_v2);
-
-    // TODO: In a real implementation, the merkle root would be part of the public parameters
-    // or passed as a parameter. For now, we use a placeholder.
-    let merkle_root = ScalarField::from(0u64);
-
-    // Generate proof π_1: Sender membership
-    let sender_instance = SenderMembershipInstance {
-        c1: c1.clone(),
-        merkle_root,
-    };
-    let sender_witness = SenderMembershipWitness {
-        pk_x: pk_x_scalar,
-        pk_y: pk_y_scalar,
-        md_2_k_s,
-        r1,
-        merkle_proof: own_merkle_proof.to_vec(),
-    };
-    let pi_1 = prove_sender_membership(&sender_instance, &sender_witness)?;
-
-    // Generate proof π_3: Receiver membership
-    let receiver_instance = ReceiverMembershipInstance {
-        c2: c2.clone(),
-        merkle_root,
-    };
-    let receiver_witness = ReceiverMembershipWitness {
-        pk_r_x: pk_r_x_scalar,
-        pk_r_y: pk_r_y_scalar,
-        md_2_k_r,
-        r2,
-        merkle_proof: receiver.merkle_proof.clone(),
-    };
-    let pi_3 = prove_receiver_membership(&receiver_instance, &receiver_witness)?;
-
-    // Generate proof π_2: Weight subtree
-    // TODO: In a real implementation, the UserView would need to include the sub-merkle tree
-    // structure to generate proofs for v1 and v2. For now, we use empty vectors as placeholders.
-    let weight_instance = WeightSubtreeInstance {
-        c1: c1.clone(),
-        c2: c2.clone(),
-        c_v1: c_v1.clone(),
-        c_v2: c_v2.clone(),
-    };
-    let weight_witness = WeightSubtreeWitness {
-        pk_x: pk_x_scalar,
-        pk_y: pk_y_scalar,
-        md_2_k_s,
-        r1,
-        pk_r_x: pk_r_x_scalar,
-        pk_r_y: pk_r_y_scalar,
-        md_2_k_r,
-        r2,
-        v1,
-        r_v1,
-        v2,
-        r_v2,
-        sub_merkle_proof_v1: vec![], // TODO: Generate actual sub-merkle proof
-        sub_merkle_proof_v2: vec![], // TODO: Generate actual sub-merkle proof
-    };
-    let pi_2 = prove_weight_subtree(&weight_instance, &weight_witness)?;
 
     // Generate π_{4,G1} and π_{4,G2} proofs for Schnorr bridging
     // These proofs connect the public key representations across different groups
@@ -551,13 +956,17 @@ fn generate_forward_proof(
     let g_rho = g1_base_proj * rho;
 
     // Generate proof π_{4,G1}: Schnorr bridging
+    // This proof receives all four commitments (C11, C12, C21, C22) and must
+    // internally prove witness consistency across different circuit bases
     let schnorr_instance = SchnorrBridgingInstance {
         pk_star_coord,
         pk_r_star_coord,
-        c1: c1.clone(),
-        c2: c2.clone(),
-        c_v1: c_v1.clone(),
-        c_v2: c_v2.clone(),
+        c11, // Sender with merkle circuit bases (goes into π_1 and π_4)
+        c12, // Sender with weight circuit bases (goes into π_2 and π_4)
+        c21, // Receiver with merkle circuit bases (goes into π_3 and π_4)
+        c22, // Receiver with weight circuit bases (goes into π_2 and π_4)
+        c_v1,
+        c_v2,
         g_rho,
     };
 
@@ -565,15 +974,15 @@ fn generate_forward_proof(
         pk_x: pk_x_scalar,
         pk_y: pk_y_scalar,
         md_2_k_s,
-        r1,
+        r1: r1_new,
         pk_r_x: pk_r_x_scalar,
         pk_r_y: pk_r_y_scalar,
         md_2_k_r,
-        r2,
+        r2: r2_new,
         v1,
-        r_v1,
+        r_v1: r_v1_new,
         v2,
-        r_v2,
+        r_v2: r_v2_new,
         rho,
         pk_star_x: pk_star_x_scalar,
         pk_star_y: pk_star_y_scalar,
@@ -614,44 +1023,48 @@ fn generate_forward_proof(
 
     let pi_4_g2 = prove_public_key_operations(&pk_ops_instance, &pk_ops_witness)?;
 
-    Ok(Proof {
+    let hop_proofs = HopProofs {
         pi_1,
         pi_2,
         pi_3,
         pi_4_g1,
         pi_4_g2,
-    })
+    };
+
+    Ok((
+        hop_proofs,
+        G1Wrapper(c11.into_affine()),
+        G1Wrapper(c12.into_affine()),
+        G1Wrapper(c21.into_affine()),
+        G1Wrapper(c22.into_affine()),
+        G1Wrapper(c_v1.into_affine()),
+        G1Wrapper(c_v2.into_affine()),
+        G3Wrapper(pk_star),
+        G3Wrapper(pk_r_star),
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::generators::Generators;
     use crate::protocol::spawn::spawn;
     use rand::thread_rng;
 
     // Helper function to create public parameters for tests
-    fn create_test_public_params<R: Rng>(rng: &mut R) -> PublicParams {
-        PublicParams {
-            num_nodes: 10,
-            max_out_degree: 10,
-            g1_generators: vec![],
-            g3_generators: vec![],
-            groth16_params: vec![],
-            generators: Generators::generate(rng, 10, 10, 10),
-        }
+    fn create_test_public_params<R: Rng + rand::CryptoRng>(rng: &mut R) -> PublicParams {
+        PublicParams::generate(10, 10, rng).expect("Failed to generate params")
     }
 
     #[test]
     fn test_forward_basic() {
         let mut rng = thread_rng();
 
-        // Setup: generate protocol state with 3 users
-        let generated_state = generate_state(3, &mut rng);
-        let user_0_view = &generated_state.users_view[0];
-
         // Create public parameters
         let pp = create_test_public_params(&mut rng);
+
+        // Setup: generate protocol state with 3 users
+        let generated_state = generate_random_state(&pp, 3, &mut rng);
+        let user_0_view = &generated_state.users_view[0];
 
         // Spawn initial message from user 0
         let message = spawn(
@@ -683,12 +1096,12 @@ mod tests {
     fn test_forward_max_hops() {
         let mut rng = thread_rng();
 
-        // Setup: generate protocol state with 1 user
-        let generated_state = generate_state(1, &mut rng);
-        let user_0_view = &generated_state.users_view[0];
-
         // Create public parameters
         let pp = create_test_public_params(&mut rng);
+
+        // Setup: generate protocol state with 1 user
+        let generated_state = generate_random_state(&pp, 1, &mut rng);
+        let user_0_view = &generated_state.users_view[0];
 
         // Create a message with maximum hops
         let mut message = spawn(
@@ -710,13 +1123,27 @@ mod tests {
                 phi: PrfOutput {
                     phi: G1Projective::generator().into_affine(),
                 },
-                pi: Proof {
-                    pi_1: vec![],
-                    pi_2: vec![],
-                    pi_3: vec![],
-                    pi_4_g1: vec![],
-                    pi_4_g2: vec![],
+                pi: HopProofs {
+                    pi_1: mock_groth16_proof(),
+                    pi_2: mock_groth16_proof(),
+                    pi_3: mock_groth16_proof(),
+                    pi_4_g1: Schnorr {
+                        data: vec![],
+                        _phantom: std::marker::PhantomData,
+                    },
+                    pi_4_g2: Schnorr {
+                        data: vec![],
+                        _phantom: std::marker::PhantomData,
+                    },
                 },
+                c11: G1Wrapper(G1Projective::generator().into_affine()),
+                c12: G1Wrapper(G1Projective::generator().into_affine()),
+                c21: G1Wrapper(G1Projective::generator().into_affine()),
+                c22: G1Wrapper(G1Projective::generator().into_affine()),
+                cv1: G1Wrapper(G1Projective::generator().into_affine()),
+                cv2: G1Wrapper(G1Projective::generator().into_affine()),
+                pk_star: G3Wrapper(user_0_view.public_key.pk),
+                pk_r_star: G3Wrapper(user_0_view.public_key.pk),
             });
         }
 
@@ -732,8 +1159,11 @@ mod tests {
         let mut rng = thread_rng();
         let num_users = 8;
 
+        // Create public parameters
+        let pp = create_test_public_params(&mut rng);
+
         // Generate protocol state
-        let generated_state = generate_state(num_users, &mut rng);
+        let generated_state = generate_random_state(&pp, num_users, &mut rng);
 
         // Verify basic structure
         assert_eq!(generated_state.users_view.len(), num_users);
@@ -888,8 +1318,11 @@ mod tests {
         let mut rng = thread_rng();
         let num_users = 5;
 
+        // Create public parameters
+        let pp = create_test_public_params(&mut rng);
+
         // Generate protocol state
-        let generated_state = generate_state(num_users, &mut rng);
+        let generated_state = generate_random_state(&pp, num_users, &mut rng);
 
         println!("Testing NeighboursView for {} users", num_users);
 

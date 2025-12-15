@@ -4,6 +4,7 @@
 
 use crate::crypto::curve_ops::diversify_with_diversifier;
 use crate::crypto::PoseidonHash;
+use crate::proving::circuits::mock_groth16_proof;
 use crate::types::*;
 use rand::Rng;
 
@@ -79,16 +80,22 @@ fn generate_spawn_proof(
     _pid: PacketId,
     _sid: SessionId,
     _ppk_0: &DiversifiedPublicKey,
-) -> ProtocolResult<Proof> {
+) -> ProtocolResult<HopProofs> {
     // TODO: Full proof generation
     // For now, return stub
 
-    Ok(Proof {
-        pi_1: vec![0u8; 32],
-        pi_2: vec![0u8; 32],
-        pi_3: vec![0u8; 32],
-        pi_4_g1: vec![0u8; 32],
-        pi_4_g2: vec![0u8; 32],
+    Ok(HopProofs {
+        pi_1: mock_groth16_proof(),
+        pi_2: mock_groth16_proof(),
+        pi_3: mock_groth16_proof(),
+        pi_4_g1: Schnorr {
+            data: vec![0u8; 32],
+            _phantom: std::marker::PhantomData,
+        },
+        pi_4_g2: Schnorr {
+            data: vec![0u8; 32],
+            _phantom: std::marker::PhantomData,
+        },
     })
 }
 

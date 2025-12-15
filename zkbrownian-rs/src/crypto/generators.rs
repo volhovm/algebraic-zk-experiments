@@ -46,6 +46,8 @@ pub struct Generators {
     pub g2_generators: Vec<G2Point>,
     /// Additional G3 generators: K_1, K_2, K_3, ...
     pub g3_generators: Vec<G3>,
+    /// Commitment randomness bases: hs[0] for merkle circuit, hs[1] for weight circuit
+    pub h_commitment_bases: Vec<G1Point>,
 }
 
 impl Generators {
@@ -63,6 +65,7 @@ impl Generators {
             g1_generators: generate_g1_generators(rng, num_g1),
             g2_generators: generate_g2_generators(rng, num_g2),
             g3_generators: generate_g3_generators(rng, num_g3),
+            h_commitment_bases: generate_g1_generators(rng, 2), // hs[0] and hs[1]
         }
     }
 
@@ -91,6 +94,13 @@ impl Generators {
         } else {
             self.g3_generators.get(index - 1)
         }
+    }
+
+    /// Get a commitment randomness base by index
+    /// * index 0: hs[0] for merkle membership circuit commitments
+    /// * index 1: hs[1] for weight subtree circuit commitments
+    pub fn h_commitment(&self, index: usize) -> Option<&G1Point> {
+        self.h_commitment_bases.get(index)
     }
 }
 
