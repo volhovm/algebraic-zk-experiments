@@ -30,99 +30,77 @@ pub fn mock_groth16_proof() -> ProofGroth16 {
 }
 
 // =============================================================================
-// π_1: Sender Membership Proof
+// π_1 and π_3: Merkle Membership Proof (unified for sender and receiver)
 // =============================================================================
 
-/// Instance (public inputs) for sender membership proof π_1
+/// Instance (public inputs) for merkle membership proof (π_1 or π_3)
+///
+/// This is a unified structure used for both sender membership (π_1) and
+/// receiver membership (π_3), as they use the same circuit and CRS.
 #[derive(Clone, Debug)]
-pub struct SenderMembershipInstance {
-    /// Commitment C1 = g1^{pk_x} * g2^{pk_y} * g3^{md_{2,k_s}} * g4^{r1}
-    pub c1: G1Projective,
+pub struct MerkleMembershipInstance {
+    /// Commitment to public key: C = gamma_abc_g1[1]^{pk_x} * gamma_abc_g1[2]^{pk_y} * gamma_abc_g1[3]^{md_2} * hs[0]^{r}
+    pub c: G1Projective,
     /// Root of the main merkle tree
     pub merkle_root: ScalarField,
 }
 
-/// Witness (private inputs) for sender membership proof π_1
+/// Witness (private inputs) for merkle membership proof (π_1 or π_3)
+///
+/// This is a unified structure used for both sender and receiver membership proofs.
 #[derive(Clone, Debug)]
-pub struct SenderMembershipWitness {
-    /// Sender's public key x-coordinate
+pub struct MerkleMembershipWitness {
+    /// Public key x-coordinate
     pub pk_x: ScalarField,
-    /// Sender's public key y-coordinate
+    /// Public key y-coordinate
     pub pk_y: ScalarField,
-    /// Sender's sub-merkle tree root (md_{2,k_s})
-    pub md_2_k_s: ScalarField,
-    /// Blinding factor for commitment C1
-    pub r1: ScalarField,
-    /// Merkle proof path for sender's inclusion in main tree
+    /// Sub-merkle tree root (md_2)
+    pub md_2: ScalarField,
+    /// Blinding factor for commitment
+    pub r: ScalarField,
+    /// Merkle proof path for inclusion in main tree
     pub merkle_proof: Vec<ScalarField>,
 }
 
-/// Generate sender membership proof (π_1)
+/// Generate merkle membership proof (π_1 for sender or π_3 for receiver)
 ///
-/// This proves that the sender's public key is committed in C1 and
-/// is included in the main merkle tree.
+/// This proves that a public key is committed in C and is included in the main merkle tree.
 ///
 /// # Arguments
-/// * `instance` - Public inputs (C1, merkle_root)
-/// * `witness` - Private inputs (pk_x, pk_y, md_{2,k_s}, r1, merkle_proof)
+/// * `instance` - Public inputs (C, merkle_root)
+/// * `witness` - Private inputs (pk_x, pk_y, md_2, r, merkle_proof)
 ///
 /// # Returns
 /// Groth16 proof
+pub fn prove_merkle_membership(
+    _instance: &MerkleMembershipInstance,
+    _witness: &MerkleMembershipWitness,
+) -> ProtocolResult<ProofGroth16> {
+    // TODO: Actual Groth16 proof generation
+    // For now, return mock proof with random elements
+    Ok(mock_groth16_proof())
+}
+
+// Legacy aliases for backward compatibility during transition
+pub type SenderMembershipInstance = MerkleMembershipInstance;
+pub type SenderMembershipWitness = MerkleMembershipWitness;
+pub type ReceiverMembershipInstance = MerkleMembershipInstance;
+pub type ReceiverMembershipWitness = MerkleMembershipWitness;
+
+/// Legacy function for sender membership - redirects to unified function
 pub fn prove_sender_membership(
-    _instance: &SenderMembershipInstance,
-    _witness: &SenderMembershipWitness,
+    instance: &SenderMembershipInstance,
+    witness: &SenderMembershipWitness,
 ) -> ProtocolResult<ProofGroth16> {
-    // TODO: Actual Groth16 proof generation
-    // For now, return mock proof with random elements
-    Ok(mock_groth16_proof())
+    prove_merkle_membership(instance, witness)
 }
 
-// =============================================================================
-// π_3: Receiver Membership Proof
-// =============================================================================
-
-/// Instance (public inputs) for receiver membership proof π_3
-#[derive(Clone, Debug)]
-pub struct ReceiverMembershipInstance {
-    /// Commitment C2 = g1^{pk_{r,x}} * g2^{pk_{r,y}} * g3^{md_{2,k_r}} * g4^{r2}
-    pub c2: G1Projective,
-    /// Root of the main merkle tree
-    pub merkle_root: ScalarField,
-}
-
-/// Witness (private inputs) for receiver membership proof π_3
-#[derive(Clone, Debug)]
-pub struct ReceiverMembershipWitness {
-    /// Receiver's public key x-coordinate
-    pub pk_r_x: ScalarField,
-    /// Receiver's public key y-coordinate
-    pub pk_r_y: ScalarField,
-    /// Receiver's sub-merkle tree root (md_{2,k_r})
-    pub md_2_k_r: ScalarField,
-    /// Blinding factor for commitment C2
-    pub r2: ScalarField,
-    /// Merkle proof path for receiver's inclusion in main tree
-    pub merkle_proof: Vec<ScalarField>,
-}
-
-/// Generate receiver membership proof (π_3)
-///
-/// This proves that the receiver's public key is committed in C2 and
-/// is included in the main merkle tree.
-///
-/// # Arguments
-/// * `instance` - Public inputs (C2, merkle_root)
-/// * `witness` - Private inputs (pk_r_x, pk_r_y, md_{2,k_r}, r2, merkle_proof)
-///
-/// # Returns
-/// Groth16 proof
+/// Legacy function for receiver membership - redirects to unified function
 pub fn prove_receiver_membership(
-    _instance: &ReceiverMembershipInstance,
-    _witness: &ReceiverMembershipWitness,
+    instance: &ReceiverMembershipInstance,
+    witness: &ReceiverMembershipWitness,
 ) -> ProtocolResult<ProofGroth16> {
-    // TODO: Actual Groth16 proof generation
-    // For now, return mock proof with random elements
-    Ok(mock_groth16_proof())
+    prove_merkle_membership(instance, witness)
 }
 
 // =============================================================================
@@ -208,16 +186,24 @@ pub fn prove_weight_subtree(
 ///
 /// This proof bridges the representation of public keys between G3 (Grumpkin)
 /// and G1 (BLS12-381) by expressing G3 coordinates as commitments in G1.
+///
+/// Note: This proof receives 4 commitments (C11, C12, C21, C22) and must
+/// internally prove that C11 and C12 open to the same witness (sender),
+/// and that C21 and C22 open to the same witness (receiver).
 #[derive(Clone, Debug)]
 pub struct SchnorrBridgingInstance {
     /// Commitment to pk_star coordinates: G1^{pk_star_x} * G2^{pk_star_y}
     pub pk_star_coord: G1Projective,
     /// Commitment to pk_r_star coordinates: G1^{pk_r_star_x} * G2^{pk_r_star_y}
     pub pk_r_star_coord: G1Projective,
-    /// Commitment to sender (C1)
-    pub c1: G1Projective,
-    /// Commitment to receiver (C2)
-    pub c2: G1Projective,
+    /// Commitment to sender with merkle circuit bases (C11)
+    pub c11: G1Projective,
+    /// Commitment to sender with weight circuit bases (C12)
+    pub c12: G1Projective,
+    /// Commitment to receiver with merkle circuit bases (C21)
+    pub c21: G1Projective,
+    /// Commitment to receiver with weight circuit bases (C22)
+    pub c22: G1Projective,
     /// Commitment to v1 (cumulative weight before receiver)
     pub c_v1: G1Projective,
     /// Commitment to v2 (cumulative weight including receiver)
@@ -284,8 +270,10 @@ pub struct SchnorrBridgingWitness {
 ///
 /// This proves that:
 /// 1. pk_star and pk_r_star are correctly formed in coordinate representation
-/// 2. All commitments C1, C2, C_v1, C_v2 are consistent with their exponents
-/// 3. The routing value ρ is correctly committed
+/// 2. All commitments C11, C12, C21, C22, C_v1, C_v2 are consistent with their exponents
+/// 3. C11 and C12 open to the same witness (pk_x, pk_y, md_2_k_s, r1)
+/// 4. C21 and C22 open to the same witness (pk_r_x, pk_r_y, md_2_k_r, r2)
+/// 5. The routing value ρ is correctly committed
 ///
 /// # Arguments
 /// * `instance` - Public inputs (coordinate commitments and other commitments)
@@ -298,6 +286,13 @@ pub fn prove_schnorr_bridging(
     _witness: &SchnorrBridgingWitness,
 ) -> ProtocolResult<Schnorr<G1>> {
     // TODO: Actual Schnorr proof generation
+    // TODO: This proof must internally prove that:
+    //       - C11 and C12 open to the same witness values (pk_x, pk_y, md_2_k_s)
+    //         where C11 uses merkle circuit bases (gamma_abc_g1[1,2,3], hs[0])
+    //         and C12 uses weight circuit bases (gamma_abc_g1[1,2,3], hs[1])
+    //       - C21 and C22 open to the same witness values (pk_r_x, pk_r_y, md_2_k_r)
+    //         using the same respective bases
+    //       This ensures consistency of committed values across different circuit bases.
     // For now, return stub proof
     Ok(Schnorr {
         data: vec![0u8; 32],
@@ -383,29 +378,29 @@ pub fn prove_public_key_operations(
 use ark_ff::Field;
 use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 
-/// Dummy circuit for sender membership proof (π_1)
+/// Dummy circuit for merkle membership proof (π_1 and π_3)
+///
+/// This circuit is used for both sender membership (π_1) and receiver membership (π_3)
+/// proofs, as they share the same structure and CRS.
 #[derive(Clone)]
-pub struct SenderMembershipCircuit<F: Field> {
+pub struct MerkleMembershipCircuit<F: Field> {
     pub _phantom: std::marker::PhantomData<F>,
 }
 
-impl<F: Field> ConstraintSynthesizer<F> for SenderMembershipCircuit<F> {
-    fn generate_constraints(self, _cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+impl<F: Field> ConstraintSynthesizer<F> for MerkleMembershipCircuit<F> {
+    fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+        // Allocate 3 public inputs to ensure gamma_abc_g1 has at least 4 elements (indices 0,1,2,3)
+        // These correspond to: pk_x, pk_y, md_2
+        let _inp1 = cs.new_input_variable(|| Ok(F::ONE))?;
+        let _inp2 = cs.new_input_variable(|| Ok(F::ONE))?;
+        let _inp3 = cs.new_input_variable(|| Ok(F::ONE))?;
         Ok(())
     }
 }
 
-/// Dummy circuit for receiver membership proof (π_3)
-#[derive(Clone)]
-pub struct ReceiverMembershipCircuit<F: Field> {
-    pub _phantom: std::marker::PhantomData<F>,
-}
-
-impl<F: Field> ConstraintSynthesizer<F> for ReceiverMembershipCircuit<F> {
-    fn generate_constraints(self, _cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
-        Ok(())
-    }
-}
+// Legacy aliases for backward compatibility
+pub type SenderMembershipCircuit<F> = MerkleMembershipCircuit<F>;
+pub type ReceiverMembershipCircuit<F> = MerkleMembershipCircuit<F>;
 
 /// Dummy circuit for weight subtree proof (π_2)
 #[derive(Clone)]
@@ -414,7 +409,12 @@ pub struct WeightSubtreeCircuit<F: Field> {
 }
 
 impl<F: Field> ConstraintSynthesizer<F> for WeightSubtreeCircuit<F> {
-    fn generate_constraints(self, _cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+    fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+        // Allocate 3 public inputs to ensure gamma_abc_g1 has at least 4 elements (indices 0,1,2,3)
+        // These correspond to: pk_x, pk_y, md_2 (same structure as merkle membership)
+        let _inp1 = cs.new_input_variable(|| Ok(F::ONE))?;
+        let _inp2 = cs.new_input_variable(|| Ok(F::ONE))?;
+        let _inp3 = cs.new_input_variable(|| Ok(F::ONE))?;
         Ok(())
     }
 }

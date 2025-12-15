@@ -287,10 +287,9 @@ pub struct PublicParams {
     pub max_out_degree: usize,
     /// Cryptographic generators for the protocol
     pub generators: crate::crypto::generators::Generators,
-    /// Groth16 proving key for sender membership proof (π_1)
-    pub pk_sender_membership: crate::proving::groth16::ProvingKey<PairingEngine>,
-    /// Groth16 proving key for receiver membership proof (π_3)
-    pub pk_receiver_membership: crate::proving::groth16::ProvingKey<PairingEngine>,
+    /// Groth16 proving key for merkle membership proof (π_1 and π_3)
+    /// Used for both sender and receiver membership proofs (same circuit, same CRS)
+    pub pk_merkle_membership: crate::proving::groth16::ProvingKey<PairingEngine>,
     /// Groth16 proving key for weight subtree proof (π_2)
     pub pk_weight_subtree: crate::proving::groth16::ProvingKey<PairingEngine>,
 }
@@ -310,9 +309,7 @@ impl PublicParams {
         max_out_degree: usize,
         rng: &mut R,
     ) -> ProtocolResult<Self> {
-        use crate::proving::circuits::{
-            ReceiverMembershipCircuit, SenderMembershipCircuit, WeightSubtreeCircuit,
-        };
+        use crate::proving::circuits::{MerkleMembershipCircuit, WeightSubtreeCircuit};
         use crate::proving::groth16::Groth16;
         use ark_crypto_primitives::snark::SNARK;
 
@@ -320,20 +317,12 @@ impl PublicParams {
         let generators = crate::crypto::generators::Generators::generate(rng, 10, 10, 10);
 
         // Generate proving keys using circuit_specific_setup
-        // For sender membership circuit (π_1)
-        let sender_circuit = SenderMembershipCircuit::<ScalarField> {
+        // For merkle membership circuit (π_1 and π_3, shared circuit and CRS)
+        let merkle_circuit = MerkleMembershipCircuit::<ScalarField> {
             _phantom: std::marker::PhantomData,
         };
-        let (pk_sender_membership, _vk) =
-            Groth16::<PairingEngine>::circuit_specific_setup(sender_circuit, rng)
-                .map_err(|e| ProtocolError::CryptoError(format!("Setup failed: {:?}", e)))?;
-
-        // For receiver membership circuit (π_3)
-        let receiver_circuit = ReceiverMembershipCircuit::<ScalarField> {
-            _phantom: std::marker::PhantomData,
-        };
-        let (pk_receiver_membership, _vk) =
-            Groth16::<PairingEngine>::circuit_specific_setup(receiver_circuit, rng)
+        let (pk_merkle_membership, _vk) =
+            Groth16::<PairingEngine>::circuit_specific_setup(merkle_circuit, rng)
                 .map_err(|e| ProtocolError::CryptoError(format!("Setup failed: {:?}", e)))?;
 
         // For weight subtree circuit (π_2)
@@ -348,8 +337,7 @@ impl PublicParams {
             num_nodes,
             max_out_degree,
             generators,
-            pk_sender_membership,
-            pk_receiver_membership,
+            pk_merkle_membership,
             pk_weight_subtree,
         })
     }
