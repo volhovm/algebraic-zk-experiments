@@ -12,6 +12,7 @@ use crate::types::*;
 ///
 /// # Arguments
 /// * `messages` - Slice of messages to verify
+/// * `merkle_root` - Root of the main merkle tree from ProtocolState
 /// * `weight_commitment` - Committed weight matrix
 /// * `all_public_keys` - List of all node public keys
 /// * `params` - Public parameters for the system
@@ -20,6 +21,7 @@ use crate::types::*;
 /// true if all messages are valid, false if any message is invalid
 pub fn verify_batch(
     messages: &[Message],
+    merkle_root: ScalarField,
     weight_commitment: &WeightCommitment,
     all_public_keys: &[PublicKey],
     params: &PublicParams,
@@ -30,6 +32,7 @@ pub fn verify_batch(
         let is_valid = verify(
             message,
             hop_count,
+            merkle_root,
             weight_commitment,
             all_public_keys,
             params,
@@ -55,6 +58,7 @@ pub fn verify_batch(
 /// # Arguments
 /// * `message` - Message to verify
 /// * `hop_count` - Expected number of hops h
+/// * `merkle_root` - Root of the main merkle tree from ProtocolState
 /// * `weight_commitment` - Committed weight matrix C
 /// * `all_public_keys` - List of all node public keys P
 /// * `params` - Public parameters for the system
@@ -64,6 +68,7 @@ pub fn verify_batch(
 pub fn verify(
     message: &Message,
     hop_count: usize,
+    merkle_root: ScalarField,
     _weight_commitment: &WeightCommitment,
     _all_public_keys: &[PublicKey],
     params: &PublicParams,
@@ -80,7 +85,7 @@ pub fn verify(
 
     // Step 2: Verify each hop proof π_i
     for (i, hop) in message.hops.iter().enumerate() {
-        if !verify_hop_proof(message, i, hop, params)? {
+        if !verify_hop_proof(message, i, hop, merkle_root, params)? {
             return Ok(false);
         }
     }
@@ -106,6 +111,7 @@ fn verify_hop_proof(
     message: &Message,
     hop_index: usize,
     hop: &Hop,
+    merkle_root: ScalarField,
     params: &PublicParams,
 ) -> ProtocolResult<bool> {
     use crate::proving::circuits::*;
@@ -116,10 +122,6 @@ fn verify_hop_proof(
     // Prepare the verifying keys
     let pvk_merkle = prepare_verifying_key(&params.pk_merkle_membership.vk);
     let pvk_weight = prepare_verifying_key(&params.pk_weight_subtree.vk);
-
-    // Get the merkle root from the weight commitment
-    // TODO: Extract actual merkle root from weight_commitment once structure is finalized
-    let merkle_root = crate::types::ScalarField::from(0u64); // Placeholder
 
     // Construct π_1 instance: Sender membership proof
     let pi_1_instance = MerkleMembershipInstance {
@@ -265,8 +267,17 @@ mod tests {
             metadata: vec![],
         };
         let params = PublicParams::generate(10, 10, &mut rng).unwrap();
+        let merkle_root = ScalarField::from(0u64); // Placeholder for test
 
-        let result = verify(&message, 0, &weight_commitment, &all_pks, &params).unwrap();
+        let result = verify(
+            &message,
+            0,
+            merkle_root,
+            &weight_commitment,
+            &all_pks,
+            &params,
+        )
+        .unwrap();
         assert!(result);
     }
 
@@ -283,9 +294,18 @@ mod tests {
             metadata: vec![],
         };
         let params = PublicParams::generate(10, 10, &mut rng).unwrap();
+        let merkle_root = ScalarField::from(0u64); // Placeholder for test
 
         // Verify with wrong hop count
-        let result = verify(&message, 5, &weight_commitment, &all_pks, &params).unwrap();
+        let result = verify(
+            &message,
+            5,
+            merkle_root,
+            &weight_commitment,
+            &all_pks,
+            &params,
+        )
+        .unwrap();
         assert!(!result);
     }
 }

@@ -130,6 +130,7 @@ fn test_basic_forward_protocol() {
     let verification_result = verify(
         &current_message,
         current_message.hop_count(),
+        generated_state.protocol_state.merkle_tree.root,
         &weight_commitment,
         &all_public_keys,
         &pp,
@@ -163,6 +164,7 @@ fn test_basic_forward_protocol() {
     let verification_start = Instant::now();
     let all_valid = verify_batch(
         &messages_to_verify,
+        generated_state.protocol_state.merkle_tree.root,
         &weight_commitment,
         &all_public_keys,
         &pp,
@@ -292,6 +294,7 @@ fn test_full_protocol() {
                 let verify_start = Instant::now();
                 let all_valid = verify_batch(
                     &messages_for_user,
+                    generated_state.protocol_state.merkle_tree.root,
                     &weight_commitment,
                     &all_public_keys,
                     &pp,
