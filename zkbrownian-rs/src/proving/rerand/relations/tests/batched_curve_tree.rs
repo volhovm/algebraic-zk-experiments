@@ -53,6 +53,7 @@ pub fn test_batched_curve_tree_with_parameters<
 
     let mut set = Vec::<Affine<P0>>::new();
     let mut indices = [0usize; M];
+    #[allow(clippy::needless_range_loop)]
     for i in 0..M {
         set.push(Affine::<P0>::rand(&mut rng));
         indices[i] = i;

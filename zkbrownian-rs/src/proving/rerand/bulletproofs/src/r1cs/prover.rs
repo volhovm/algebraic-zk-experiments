@@ -40,6 +40,7 @@ pub struct Prover<'g, T: BorrowMut<Transcript>, C: AffineRepr> {
 
     /// This list holds closures that will be called in the second phase of the protocol,
     /// when non-randomized variables are committed.
+    #[allow(clippy::type_complexity)]
     deferred_constraints:
         Vec<Box<dyn FnOnce(&mut RandomizingProver<'g, T, C>) -> Result<(), R1CSError>>>,
 
@@ -64,7 +65,7 @@ struct Secrets<F: Field> {
     v: Vec<F>,
     /// High-level witness data (blinding openings to V commitments)
     v_blinding: Vec<F>,
-    ///
+    /// Vector openings
     vec_open: Vec<(F, Vec<F>)>,
 }
 
@@ -384,6 +385,7 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
     /// (wL, wR, wO, wV)
     /// ```
     /// where `w{L,R,O}` is \\( z \cdot z^Q \cdot W_{L,R,O} \\).
+    #[allow(clippy::type_complexity)]
     fn flattened_constraints(
         &mut self,
         z: &C::ScalarField,
@@ -1007,6 +1009,7 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
 
         // commit to t-poly
         let mut T = vec![C::zero(); t_poly.deg() + 1];
+        #[allow(clippy::needless_range_loop)]
         for d in 0..t_poly.deg() + 1 {
             if d == op_degree {
                 continue;
@@ -1072,7 +1075,7 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
                 .iter()
                 .zip(y_inv_vec.iter())
                 .map(|(wRi, exp_y_inv)| (*wRi) * exp_y_inv)
-                .chain(iter::repeat(C::ScalarField::zero()).take(padded_n - n))
+                .chain(std::iter::repeat_n(C::ScalarField::zero(), padded_n - n))
                 .collect::<Vec<C::ScalarField>>();
 
             let delta = inner_product(&yneg_wR[0..n], &wL);
@@ -1090,6 +1093,7 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
             t2 += inner_product(&wR, &self.secrets.a_R);
             t2 += inner_product(&wO, &self.secrets.a_O);
 
+            #[allow(clippy::needless_range_loop)]
             for i in 0..self.secrets.vec_open.len() {
                 t2 += inner_product(&wVCs[i], &self.secrets.vec_open[i].1);
             }
@@ -1153,9 +1157,8 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
         let w = transcript.challenge_scalar::<C>(b"w");
         let Q = self.pc_gens.B.mul(w).into();
 
-        let G_factors = iter::repeat(C::ScalarField::one())
-            .take(n1)
-            .chain(iter::repeat(u).take(n2 + pad))
+        let G_factors = std::iter::repeat_n(C::ScalarField::one(), n1)
+            .chain(std::iter::repeat_n(u, n2 + pad))
             .collect::<Vec<_>>();
 
         let H_factors = exp_y_inv

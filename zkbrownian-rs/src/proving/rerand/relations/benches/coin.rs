@@ -160,7 +160,7 @@ fn bench_pour_with_parameters<
         coin_aux: coin_aux_1,
         index: 1,
         randomized_pk: randomized_pk_1,
-        sk: sk,
+        sk,
     };
     let prove = || {
         let pallas_transcript = Transcript::new(b"select_and_rerandomize");
@@ -200,7 +200,8 @@ fn bench_pour_with_parameters<
     );
 
     {
-        let mut group = c.benchmark_group(&prefix_string);
+        #[allow(unused_variables)]
+        let group = c.benchmark_group(&prefix_string);
 
         #[cfg(feature = "bench_prover")]
         group.bench_function("prove", |b| b.iter(|| prove()));
@@ -250,13 +251,12 @@ fn bench_pour_with_parameters<
         });
     }
 
-    use std::iter;
     let group_name = format!("{}_batch_verification", &prefix_string);
     let mut group = c.benchmark_group(group_name);
     for n in [1, 100] {
         group.bench_with_input(
             BenchmarkId::from_parameter(n),
-            &iter::repeat(pour_proof.clone()).take(n).collect::<Vec<_>>(),
+            &std::iter::repeat_n(pour_proof.clone(), n).collect::<Vec<_>>(),
             |b, proofs| {
                 b.iter(|| {
                     #[cfg(not(feature = "parallel"))]

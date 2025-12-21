@@ -13,11 +13,13 @@ use crate::inner_product_proof::inner_product;
 
 /// Represents a degree-1 vector polynomial \\(\mathbf{a} + \mathbf{b} \cdot x\\).
 #[derive(ZeroizeOnDrop)]
+#[allow(dead_code)]
 pub struct VecPoly1<F: Field>(pub Vec<F>, pub Vec<F>);
 
 /// Represents a degree-3 vector polynomial
 /// \\(\mathbf{a} + \mathbf{b} \cdot x + \mathbf{c} \cdot x^2 + \mathbf{d} \cdot x^3 \\).
 #[derive(ZeroizeOnDrop)]
+#[allow(dead_code)]
 pub struct VecPoly3<F: Field>(pub Vec<F>, pub Vec<F>, pub Vec<F>, pub Vec<F>);
 
 pub const T_LABELS: [&[u8]; 41] = [
@@ -119,11 +121,13 @@ impl<F: Field> VecPoly<F> {
 
 /// Represents a degree-2 scalar polynomial \\(a + b \cdot x + c \cdot x^2\\)
 #[derive(ZeroizeOnDrop)]
+#[allow(dead_code)]
 pub struct Poly2<F: Field>(pub F, pub F, pub F);
 
 /// Represents a degree-6 scalar polynomial, without the zeroth degree
 /// \\(a \cdot x + b \cdot x^2 + c \cdot x^3 + d \cdot x^4 + e \cdot x^5 + f \cdot x^6\\)
 #[derive(ZeroizeOnDrop)]
+#[allow(dead_code)]
 pub struct Poly6<F: Field> {
     pub t1: F,
     pub t2: F,
@@ -161,6 +165,7 @@ pub fn exp_iter<F: Field>(x: F) -> ScalarExp<F> {
     ScalarExp { x, next_exp_x }
 }
 
+#[allow(dead_code)]
 pub fn add_vec<F: Field>(a: &[F], b: &[F]) -> Vec<F> {
     if a.len() != b.len() {
         // throw some error
@@ -173,6 +178,7 @@ pub fn add_vec<F: Field>(a: &[F], b: &[F]) -> Vec<F> {
     out
 }
 
+#[allow(dead_code)]
 impl<F: Field> VecPoly1<F> {
     pub fn zero(n: usize) -> Self {
         VecPoly1(vec![F::zero(); n], vec![F::zero(); n])
@@ -194,6 +200,7 @@ impl<F: Field> VecPoly1<F> {
         Poly2(t0, t1, t2)
     }
 
+    #[allow(clippy::needless_range_loop)]
     pub fn eval(&self, x: F) -> Vec<F> {
         let n = self.0.len();
         let mut out = vec![F::zero(); n];
@@ -204,6 +211,7 @@ impl<F: Field> VecPoly1<F> {
     }
 }
 
+#[allow(dead_code)]
 impl<F: Field> VecPoly3<F> {
     pub fn zero(n: usize) -> Self {
         VecPoly3(
@@ -239,6 +247,7 @@ impl<F: Field> VecPoly3<F> {
         }
     }
 
+    #[allow(clippy::needless_range_loop)]
     pub fn eval(&self, x: F) -> Vec<F> {
         let n = self.0.len();
         let mut out = vec![F::zero(); n];
@@ -249,12 +258,14 @@ impl<F: Field> VecPoly3<F> {
     }
 }
 
+#[allow(dead_code)]
 impl<F: Field> Poly2<F> {
     pub fn eval(&self, x: F) -> F {
         self.0 + x * (self.1 + x * self.2)
     }
 }
 
+#[allow(dead_code)]
 impl<F: Field> Poly6<F> {
     pub fn eval(&self, x: F) -> F {
         x * (self.t1 + x * (self.t2 + x * (self.t3 + x * (self.t4 + x * (self.t5 + x * self.t6)))))
@@ -264,6 +275,7 @@ impl<F: Field> Poly6<F> {
 /// Raises `x` to the power `n` using binary exponentiation,
 /// with (1 to 2)*lg(n) scalar multiplications.
 /// TODO: a consttime version of this would be awfully similar to a Montgomery ladder.
+#[allow(dead_code)]
 pub fn scalar_exp_vartime<F: Field>(x: &F, mut n: u64) -> F {
     let mut result = F::one();
     let mut aux = *x; // x, x^2, x^4, x^8, ...
@@ -282,6 +294,7 @@ pub fn scalar_exp_vartime<F: Field>(x: &F, mut n: u64) -> F {
 // /// If `n` is a power of 2, it uses the efficient algorithm with `2*lg n` multiplications and additions.
 // /// If `n` is not a power of 2, it uses the slow algorithm with `n` multiplications and additions.
 // /// In the Bulletproofs case, all calls to `sum_of_powers` should have `n` as a power of 2.
+#[allow(dead_code)]
 pub fn sum_of_powers<F: Field>(x: &F, n: usize) -> F {
     if !n.is_power_of_two() {
         return sum_of_powers_slow(x, n);
@@ -301,11 +314,13 @@ pub fn sum_of_powers<F: Field>(x: &F, n: usize) -> F {
 }
 
 // takes the sum of all of the powers of x, up to n
+#[allow(dead_code)]
 fn sum_of_powers_slow<F: Field>(x: &F, n: usize) -> F {
     exp_iter(*x).take(n).sum()
 }
 
 /// Given `data` with `len >= 32`, return the first 32 bytes.
+#[allow(dead_code)]
 pub fn read32(data: &[u8]) -> [u8; 32] {
     let mut buf32 = [0u8; 32];
     buf32[..].copy_from_slice(&data[..32]);

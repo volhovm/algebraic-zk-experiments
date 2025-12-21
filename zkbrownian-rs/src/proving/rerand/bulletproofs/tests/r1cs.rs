@@ -68,10 +68,11 @@ impl<C: AffineRepr> ShuffleProof<C> {
     /// Attempt to construct a proof that `output` is a permutation of `input`.
     ///
     /// Returns a tuple `(proof, input_commitments || output_commitments)`.
-    pub fn prove<'a, 'b>(
+    #[allow(clippy::type_complexity)]
+    pub fn prove<'b>(
         pc_gens: &'b PedersenGens<C>,
         bp_gens: &'b BulletproofGens<C>,
-        transcript: &'a mut Transcript,
+        transcript: &mut Transcript,
         input: &[C::ScalarField],
         output: &[C::ScalarField],
     ) -> Result<(ShuffleProof<C>, Vec<C>, Vec<C>), R1CSError> {
@@ -81,25 +82,25 @@ impl<C: AffineRepr> ShuffleProof<C> {
         transcript.append_message(b"dom-sep", b"ShuffleProof");
         transcript.append_u64(b"k", k as u64);
 
-        let mut prover: Prover<_, C> = Prover::new(&pc_gens, transcript);
+        let mut prover: Prover<_, C> = Prover::new(pc_gens, transcript);
 
         // Construct blinding factors using an RNG.
         // Note: a non-example implementation would want to operate on existing commitments.
         let mut blinding_rng = rand::thread_rng();
 
         let (input_commitments, input_vars): (Vec<C>, Vec<Variable<C::ScalarField>>) = input
-            .into_iter()
+            .iter()
             .map(|v| prover.commit(*v, C::ScalarField::rand(&mut blinding_rng)))
             .unzip();
 
         let (output_commitments, output_vars): (Vec<_>, Vec<_>) = output
-            .into_iter()
+            .iter()
             .map(|v| prover.commit(*v, C::ScalarField::rand(&mut blinding_rng)))
             .unzip();
 
         ShuffleProof::<C>::gadget(&mut prover, input_vars, output_vars)?;
 
-        let proof = prover.prove(&bp_gens)?;
+        let proof = prover.prove(bp_gens)?;
 
         Ok((ShuffleProof(proof), input_commitments, output_commitments))
     }
@@ -107,11 +108,12 @@ impl<C: AffineRepr> ShuffleProof<C> {
 
 impl<C: AffineRepr> ShuffleProof<C> {
     /// Attempt to verify a `ShuffleProof`.
-    pub fn verify<'a, 'b>(
+    #[allow(clippy::ptr_arg)]
+    pub fn verify<'b>(
         &self,
         pc_gens: &'b PedersenGens<C>,
         bp_gens: &'b BulletproofGens<C>,
-        transcript: &'a mut Transcript,
+        transcript: &mut Transcript,
         input_commitments: &Vec<C>,
         output_commitments: &Vec<C>,
     ) -> Result<(), R1CSError> {
@@ -135,12 +137,13 @@ impl<C: AffineRepr> ShuffleProof<C> {
 
         ShuffleProof::<C>::gadget(&mut verifier, input_vars, output_vars)?;
 
-        verifier.verify(&self.0, &pc_gens, &bp_gens)?;
+        verifier.verify(&self.0, pc_gens, bp_gens)?;
         Ok(())
     }
-    pub fn verification_scalars_and_points<'a, 'b>(
+    #[allow(clippy::ptr_arg, clippy::extra_unused_lifetimes)]
+    pub fn verification_scalars_and_points<'b>(
         &self,
-        transcript: &'a mut Transcript,
+        transcript: &mut Transcript,
         input_commitments: &Vec<C>,
         output_commitments: &Vec<C>,
     ) -> Result<VerificationTuple<C>, R1CSError> {
@@ -179,7 +182,7 @@ fn kshuffle_helper(k: usize) {
     let (proof, input_commitments, output_commitments) = {
         // Randomly generate inputs and outputs to kshuffle
         let mut rng = rand::thread_rng();
-        let (min, max) = (0u64, std::u64::MAX);
+        let (min, max) = (0u64, u64::MAX);
         let input: Vec<Scalar> = (0..k)
             .map(|_| Scalar::from(rng.gen_range(min..max)))
             .collect();
@@ -216,7 +219,7 @@ fn kshuffle_batch_helper(k: usize, n: usize) {
     for _ in 0..n {
         // Randomly generate inputs and outputs to kshuffle
         let mut rng = rand::thread_rng();
-        let (min, max) = (0u64, std::u64::MAX);
+        let (min, max) = (0u64, u64::MAX);
         let input: Vec<Scalar> = (0..k)
             .map(|_| Scalar::from(rng.gen_range(min..max)))
             .collect();
@@ -231,6 +234,7 @@ fn kshuffle_batch_helper(k: usize, n: usize) {
     }
 
     let mut vsps = Vec::with_capacity(n);
+    #[allow(clippy::needless_range_loop)]
     for i in 0..n {
         let mut verifier_transcript = Transcript::new(b"ShuffleProofTest");
         let (proof, input_commitments, output_commitments) = &proofs_and_commitments[i];
@@ -238,8 +242,8 @@ fn kshuffle_batch_helper(k: usize, n: usize) {
             proof
                 .verification_scalars_and_points(
                     &mut verifier_transcript,
-                    &input_commitments,
-                    &output_commitments,
+                    input_commitments,
+                    output_commitments,
                 )
                 .unwrap(),
         );
@@ -311,6 +315,7 @@ fn example_gadget<F: Field, CS: ConstraintSystem<F>>(
 }
 
 // Prover's scope
+#[allow(clippy::too_many_arguments)]
 fn example_gadget_proof<C: AffineRepr>(
     pc_gens: &PedersenGens<C>,
     bp_gens: &BulletproofGens<C>,
@@ -379,7 +384,7 @@ fn example_gadget_verify<C: AffineRepr>(
 
     // 4. Verify the proof
     verifier
-        .verify(&proof, &pc_gens, &bp_gens)
+        .verify(&proof, pc_gens, bp_gens)
         .map_err(|_| R1CSError::VerificationError)
 }
 
@@ -459,9 +464,9 @@ fn range_proof_gadget() {
         let (min, max) = (0u64, ((1u128 << n) - 1) as u64);
         let values: Vec<u64> = (0..m).map(|_| rng.gen_range(min..max)).collect();
         for v in values {
-            assert!(range_proof_helper::<Affine>(v.into(), *n).is_ok());
+            assert!(range_proof_helper::<Affine>(v, *n).is_ok());
         }
-        assert!(range_proof_helper::<Affine>((max + 1).into(), *n).is_err());
+        assert!(range_proof_helper::<Affine>(max + 1, *n).is_err());
     }
 }
 

@@ -64,6 +64,7 @@ pub trait ConstraintSystem<F: Field> {
     /// ```
     ///
     /// Returns `(left, right, out)` for use in further constraints.
+    #[allow(clippy::type_complexity)]
     fn allocate_multiplier(
         &mut self,
         input_assignments: Option<(F, F)>,

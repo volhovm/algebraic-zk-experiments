@@ -49,6 +49,7 @@ pub struct Verifier<T: BorrowMut<Transcript>, C: AffineRepr> {
     /// when non-randomized variables are committed.
     /// After that, the option will flip to None and additional calls to `randomize_constraints`
     /// will invoke closures immediately.
+    #[allow(clippy::type_complexity)]
     deferred_constraints:
         Vec<Box<dyn FnOnce(&mut RandomizingVerifier<T, C>) -> Result<(), R1CSError>>>,
 
@@ -332,6 +333,7 @@ impl<T: BorrowMut<Transcript>, C: AffineRepr> Verifier<T, C> {
     /// This has the same logic as `ProverCS::flattened_constraints()`
     /// but also computes the constant terms (which the prover skips
     /// because they're not needed to construct the proof).
+    #[allow(clippy::type_complexity)]
     fn flattened_constraints(
         &mut self,
         z: &C::ScalarField,
@@ -424,10 +426,7 @@ impl<T: BorrowMut<Transcript>, C: AffineRepr> Verifier<T, C> {
         pc_gens: &PedersenGens<C>,
         bp_gens: &BulletproofGens<C>,
     ) -> Result<(), R1CSError> {
-        let verification_tuple = match self.verification_scalars_and_points(proof) {
-            Err(e) => return Err(e),
-            Ok(t) => t,
-        };
+        let verification_tuple = self.verification_scalars_and_points(proof)?;
         let padded_n = (verification_tuple.proof_independent_scalars.len() - 2) / 2;
 
         // We are performing a single-party circuit proof, so party index is 0.
@@ -596,14 +595,16 @@ impl<T: BorrowMut<Transcript>, C: AffineRepr> Verifier<T, C> {
             .into_iter()
             .zip(y_inv_vec.iter())
             .map(|(wRi, exp_y_inv)| wRi * exp_y_inv)
-            .chain(iter::repeat(C::ScalarField::zero()).take(padded_n - self.num_vars))
+            .chain(std::iter::repeat_n(
+                C::ScalarField::zero(),
+                padded_n - self.num_vars,
+            ))
             .collect::<Vec<C::ScalarField>>();
 
         let delta = inner_product(&yneg_wR[0..self.num_vars], &wL);
 
-        let u_for_g = iter::repeat(C::ScalarField::one())
-            .take(n1)
-            .chain(iter::repeat(u).take(n2 + pad));
+        let u_for_g =
+            std::iter::repeat_n(C::ScalarField::one(), n1).chain(std::iter::repeat_n(u, n2 + pad));
 
         let mut u_for_h = u_for_g.clone();
 

@@ -57,7 +57,7 @@ harness = false
 [profile.release]
 lto = true
 
-[build]
- # Adds architecture specific optimizations including those enabling the asm backend for ark_ff. It could potentially cause slowdowns from other features.
-rustflags = "-C target-cpu=native"
- # You could alternatively add support for the asm backend through "-C target-feature=+bmi2,+adx", but the binary would only run on systems supporting these instructions.
+# Note: Build configuration (rustflags) should be in .cargo/config.toml, not here
+# [build] is not a valid Cargo.toml section
+# Adds architecture specific optimizations including those enabling the asm backend for ark_ff.
+# rustflags = "-C target-cpu=native"

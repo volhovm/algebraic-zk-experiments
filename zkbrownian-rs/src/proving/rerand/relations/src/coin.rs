@@ -161,6 +161,7 @@ pub struct SpendingInfo<P: SWCurveConfig + Clone, C: CurveGroup> {
     pub sk: SecretKey<C>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn prove_pour<
     const L: usize,
     F0: PrimeField,
@@ -788,7 +789,7 @@ mod tests {
             Schnorr::randomize_signature(&parameters, &signature, &randomness).unwrap();
         let randomized_pk = Schnorr::randomize_public_key(&parameters, &pk, &randomness).unwrap();
         let res = Schnorr::verify(&parameters, &randomized_pk, msg, &randomized_sig).unwrap();
-        assert_eq!(res, true);
+        assert!(res);
     }
 
     #[test]
@@ -943,7 +944,7 @@ mod tests {
             coin_aux: coin_aux_1,
             index: 1,
             randomized_pk: randomized_pk_1,
-            sk: sk,
+            sk,
         };
 
         let receiver_pk_0 = pk;

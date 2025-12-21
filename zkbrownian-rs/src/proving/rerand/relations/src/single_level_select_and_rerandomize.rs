@@ -145,7 +145,7 @@ pub fn single_level_batched_select_and_rerandomize<
     let mut sum_of_selected = PointRepresentation {
         x: Variable::One(PhantomData).into(),
         y: Variable::One(PhantomData).into(),
-        witness: children_plus_delta.map(|_| (Affine::<C2>::zero())),
+        witness: children_plus_delta.map(|_| Affine::<C2>::zero()),
     };
     // Split the variables of the vector commitments into chunks corresponding to the M parents.
     let chunks = children.chunks_exact(children.len() / M);
@@ -253,8 +253,8 @@ mod tests {
                 Some(child_plus_delta),
                 Some(rerandomization),
             );
-            let proof = prover.prove(&sr_params.odd_parameters.bp_gens).unwrap();
-            proof
+
+            prover.prove(&sr_params.odd_parameters.bp_gens).unwrap()
         };
 
         let mut transcript: Transcript = Transcript::new(b"single_level_select_and_rerandomize");
@@ -343,8 +343,8 @@ mod tests {
                 ]),
                 Some(rerandomization_1 + rerandomization_2),
             );
-            let proof = prover.prove(&sr_params.odd_parameters.bp_gens).unwrap();
-            proof
+
+            prover.prove(&sr_params.odd_parameters.bp_gens).unwrap()
         };
 
         let mut transcript: Transcript = Transcript::new(b"single_level_select_and_rerandomize");

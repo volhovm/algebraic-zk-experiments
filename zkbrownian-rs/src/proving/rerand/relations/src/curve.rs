@@ -195,8 +195,8 @@ mod tests {
     use ark_pallas::Affine as PallasA;
     use ark_vesta::Affine as VestaA;
 
-    use ark_ed_on_bls12_381::{JubjubConfig, SWAffine as JubjubA};
     use ark_bls12_381::G1Affine as G1A;
+    use ark_ed_on_bls12_381::SWAffine as JubjubA;
 
     type VestaScalar = <VestaA as AffineRepr>::ScalarField;
     type BLSScalar = <G1A as AffineRepr>::ScalarField;
@@ -283,7 +283,7 @@ mod tests {
         let x_l: VestaScalar = (p as PallasA).x;
         let y_l: VestaScalar = (p as PallasA).y;
 
-        let q = p.clone() ; //<PallasA as UniformRand>::rand(&mut rng);
+        let q = p; //<PallasA as UniformRand>::rand(&mut rng);
         let x_r: VestaScalar = (q as PallasA).x;
         let y_r: VestaScalar = (q as PallasA).y;
 

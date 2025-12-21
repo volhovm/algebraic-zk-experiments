@@ -18,6 +18,7 @@ mod veccom_twice {
     use super::*;
 
     // Prover's scope
+    #[allow(clippy::too_many_arguments)]
     fn gadget_proof<C: AffineRepr>(
         pc_gens: &PedersenGens<C>,
         bp_gens: &BulletproofGens<C>,
@@ -59,7 +60,7 @@ mod veccom_twice {
         let _: Vec<_> = verifier.commit_vec(0, comm2);
 
         verifier
-            .verify(&proof, &pc_gens, &bp_gens)
+            .verify(&proof, pc_gens, bp_gens)
             .map_err(|_| R1CSError::VerificationError)
     }
 
@@ -98,6 +99,7 @@ mod veccom_empty {
     }
 
     // Prover's scope
+    #[allow(clippy::too_many_arguments)]
     fn gadget_proof<C: AffineRepr>(
         pc_gens: &PedersenGens<C>,
         bp_gens: &BulletproofGens<C>,
@@ -170,7 +172,7 @@ mod veccom_empty {
 
         // 4. Verify the proof
         verifier
-            .verify(&proof, &pc_gens, &bp_gens)
+            .verify(&proof, pc_gens, bp_gens)
             .map_err(|_| R1CSError::VerificationError)
     }
 
@@ -194,6 +196,7 @@ mod veccom_empty {
 mod veccom_non_empty_do_nothing {
     use super::*;
 
+    #[allow(clippy::too_many_arguments)]
     fn gadget<F: Field, CS: ConstraintSystem<F>>(
         cs: &mut CS,
         _a1: LinearCombination<F>,
@@ -208,6 +211,7 @@ mod veccom_non_empty_do_nothing {
     }
 
     // Prover's scope
+    #[allow(clippy::too_many_arguments)]
     fn gadget_proof<C: AffineRepr>(
         pc_gens: &PedersenGens<C>,
         bp_gens: &BulletproofGens<C>,
@@ -235,7 +239,7 @@ mod veccom_non_empty_do_nothing {
 
         let h = C::ScalarField::rand(&mut rng);
         let (comm, vars) = prover.commit_vec(
-            &vec![
+            &[
                 C::ScalarField::from(a1),
                 C::ScalarField::from(a2),
                 C::ScalarField::from(a3),
@@ -299,7 +303,7 @@ mod veccom_non_empty_do_nothing {
 
         // 4. Verify the proof
         verifier
-            .verify(&proof, &pc_gens, &bp_gens)
+            .verify(&proof, pc_gens, bp_gens)
             .map_err(|_| R1CSError::VerificationError)
     }
 
@@ -335,6 +339,7 @@ mod veccom_non_trivial_linear {
     use super::*;
 
     /// Constrains (a1 + a2) * (b1 + b2) = (c1 + c2)
+    #[allow(clippy::too_many_arguments)]
     fn gadget<F: Field, CS: ConstraintSystem<F>>(
         cs: &mut CS,
         a1: LinearCombination<F>,
@@ -353,6 +358,7 @@ mod veccom_non_trivial_linear {
     }
 
     // Prover's scope
+    #[allow(clippy::too_many_arguments)]
     fn gadget_proof<C: AffineRepr>(
         pc_gens: &PedersenGens<C>,
         bp_gens: &BulletproofGens<C>,
@@ -380,7 +386,7 @@ mod veccom_non_trivial_linear {
 
         let h = C::ScalarField::rand(&mut rng);
         let (comm, vars) = prover.commit_vec(
-            &vec![
+            &[
                 C::ScalarField::from(a1),
                 C::ScalarField::from(a2),
                 C::ScalarField::from(a3),
@@ -444,7 +450,7 @@ mod veccom_non_trivial_linear {
 
         // 4. Verify the proof
         verifier
-            .verify(&proof, &pc_gens, &bp_gens)
+            .verify(&proof, pc_gens, bp_gens)
             .map_err(|_| R1CSError::VerificationError)
     }
 
@@ -491,6 +497,7 @@ mod veccom_large_linear {
     }
 
     // Prover's scope
+    #[allow(clippy::too_many_arguments)]
     fn gadget_proof<C: AffineRepr>(
         pc_gens: &PedersenGens<C>,
         bp_gens: &BulletproofGens<C>,
@@ -549,7 +556,7 @@ mod veccom_large_linear {
 
         // 4. Verify the proof
         verifier
-            .verify(&proof, &pc_gens, &bp_gens)
+            .verify(&proof, pc_gens, bp_gens)
             .map_err(|_| R1CSError::VerificationError)
     }
 
@@ -584,6 +591,7 @@ mod veccom_mul_seperate {
     }
 
     // Prover's scope
+    #[allow(clippy::too_many_arguments)]
     fn gadget_proof<C: AffineRepr>(
         pc_gens: &PedersenGens<C>,
         bp_gens: &BulletproofGens<C>,
@@ -643,7 +651,7 @@ mod veccom_mul_seperate {
 
         // 4. Verify the proof
         verifier
-            .verify(&proof, &pc_gens, &bp_gens)
+            .verify(&proof, pc_gens, bp_gens)
             .map_err(|_| R1CSError::VerificationError)
     }
 
@@ -682,6 +690,7 @@ mod veccom_mul {
     }
 
     // Prover's scope
+    #[allow(clippy::too_many_arguments)]
     fn gadget_proof<C: AffineRepr>(
         pc_gens: &PedersenGens<C>,
         bp_gens: &BulletproofGens<C>,
@@ -737,7 +746,7 @@ mod veccom_mul {
 
         // 4. Verify the proof
         verifier
-            .verify(&proof, &pc_gens, &bp_gens)
+            .verify(&proof, pc_gens, bp_gens)
             .map_err(|_| R1CSError::VerificationError)
     }
 

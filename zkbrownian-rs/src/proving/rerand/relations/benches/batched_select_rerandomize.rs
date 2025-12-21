@@ -222,7 +222,8 @@ fn bench_naive_batch_select_and_rerandomize_with_parameters<
     );
 
     {
-        let mut group = c.benchmark_group(&prefix_string);
+        #[allow(unused_variables)]
+        let group = c.benchmark_group(&prefix_string);
 
         #[cfg(feature = "detailed_benchmarks")]
         group.bench_function("prover_gadget", |b| {
@@ -367,19 +368,19 @@ fn bench_naive_batch_select_and_rerandomize_with_parameters<
 
     let group_name = format!("{}_batch_verification", &prefix_string);
     let mut group = c.benchmark_group(group_name);
-    use std::iter;
 
     // for n in [1, 2, 10, 50, 100] {
     for n in [1, 100] {
         group.bench_with_input(
             BenchmarkId::from_parameter(n),
-            &iter::repeat(paths.clone()).take(n).collect::<Vec<_>>(),
+            &std::iter::repeat_n(paths.clone(), n).collect::<Vec<_>>(),
             |b, proofs| {
                 b.iter(|| {
                     #[cfg(feature = "parallel")]
                     {
                         let srvs = proofs.par_iter().map(|paths| {
                             let mut paths_with_root = Vec::new();
+                            #[allow(clippy::needless_range_loop)]
                             for i in 0..M {
                                 let mut path = paths[i].clone();
                                 curve_tree
@@ -396,6 +397,7 @@ fn bench_naive_batch_select_and_rerandomize_with_parameters<
                                         let even_transcript =
                                             Transcript::new(b"select_and_rerandomize");
                                         let mut even_verifier = Verifier::new(even_transcript);
+                                        #[allow(clippy::needless_range_loop)]
                                         for i in 0..M {
                                             srv[i].even_verifier_gadget(
                                                 &mut even_verifier,
@@ -403,10 +405,10 @@ fn bench_naive_batch_select_and_rerandomize_with_parameters<
                                                 &curve_tree,
                                             );
                                         }
-                                        let even_vt = even_verifier
+
+                                        even_verifier
                                             .verification_scalars_and_points(&even_proof)
-                                            .unwrap();
-                                        even_vt
+                                            .unwrap()
                                     })
                                     .collect();
                                 batch_verify(
@@ -422,6 +424,7 @@ fn bench_naive_batch_select_and_rerandomize_with_parameters<
                                         let odd_transcript =
                                             Transcript::new(b"select_and_rerandomize");
                                         let mut odd_verifier = Verifier::new(odd_transcript);
+                                        #[allow(clippy::needless_range_loop)]
                                         for i in 0..M {
                                             srv[i].odd_verifier_gadget(
                                                 &mut odd_verifier,
@@ -430,10 +433,9 @@ fn bench_naive_batch_select_and_rerandomize_with_parameters<
                                             );
                                         }
 
-                                        let odd_vt = odd_verifier
+                                        odd_verifier
                                             .verification_scalars_and_points(&odd_proof)
-                                            .unwrap();
-                                        odd_vt
+                                            .unwrap()
                                     })
                                     .collect();
                                 batch_verify(
@@ -591,7 +593,8 @@ fn bench_grafted_batch_select_and_rerandomize_with_parameters<
     );
 
     {
-        let mut group = c.benchmark_group(&prefix_string);
+        #[allow(unused_variables)]
+        let group = c.benchmark_group(&prefix_string);
 
         #[cfg(feature = "detailed_benchmarks")]
         group.bench_function("prover_gadget", |b| {
@@ -736,20 +739,18 @@ fn bench_grafted_batch_select_and_rerandomize_with_parameters<
 
     let group_name = format!("{}_batch_verification", &prefix_string);
     let mut group = c.benchmark_group(group_name);
-    use std::iter;
 
     // for n in [1, 2, 10, 50, 100] {
     for n in [1, 100] {
         group.bench_with_input(
             BenchmarkId::from_parameter(n),
-            &iter::repeat(multi_path.clone())
-                .take(n)
+            &std::iter::repeat_n(multi_path.clone(), n)
                 .collect::<Vec<SelectAndRerandomizeMultiPath<L, M, P0, P1>>>(),
             |b, proofs| {
                 b.iter(|| {
                     #[cfg(feature = "parallel")]
                     {
-                        let srvs = proofs.par_iter().map(|paths| {
+                        let srvs = proofs.par_iter().map(|_paths| {
                             let mut path_with_root = multi_path.clone();
                             curve_tree.batched_select_and_rerandomize_verification_commitments(
                                 &mut path_with_root,
@@ -771,10 +772,9 @@ fn bench_grafted_batch_select_and_rerandomize_with_parameters<
                                             &curve_tree,
                                         );
 
-                                        let even_vt = even_verifier
+                                        even_verifier
                                             .verification_scalars_and_points(&even_proof)
-                                            .unwrap();
-                                        even_vt
+                                            .unwrap()
                                     })
                                     .collect();
                                 batch_verify(
@@ -797,10 +797,9 @@ fn bench_grafted_batch_select_and_rerandomize_with_parameters<
                                             &curve_tree,
                                         );
 
-                                        let odd_vt = odd_verifier
+                                        odd_verifier
                                             .verification_scalars_and_points(&odd_proof)
-                                            .unwrap();
-                                        odd_vt
+                                            .unwrap()
                                     })
                                     .collect();
                                 batch_verify(

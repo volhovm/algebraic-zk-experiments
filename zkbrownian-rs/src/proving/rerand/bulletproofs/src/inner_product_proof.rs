@@ -37,6 +37,7 @@ impl<C: AffineRepr> InnerProductProof<C> {
     ///
     /// The lengths of the vectors must all be the same, and must all be
     /// either 0 or a power of 2.
+    #[allow(clippy::too_many_arguments)]
     pub fn create(
         transcript: &mut Transcript,
         Q: &C,
@@ -238,6 +239,7 @@ impl<C: AffineRepr> InnerProductProof<C> {
     /// Computes three vectors of verification scalars \\([u\_{i}^{2}]\\), \\([u\_{i}^{-2}]\\) and \\([s\_{i}]\\) for combined multiscalar multiplication
     /// in a parent protocol. See [inner product protocol notes](index.html#verification-equation) for details.
     /// The verifier must provide the input length \\(n\\) explicitly to avoid unbounded allocation within the inner product proof.
+    #[allow(clippy::type_complexity)]
     pub(crate) fn verification_scalars(
         &self,
         n: usize,
@@ -311,6 +313,7 @@ impl<C: AffineRepr> InnerProductProof<C> {
     /// method to combine inner product verification with other checks
     /// in a single multiscalar multiplication.
     #[allow(dead_code)]
+    #[allow(clippy::too_many_arguments)]
     pub fn verify<IG, IH>(
         &self,
         n: usize,
@@ -482,9 +485,8 @@ mod tests {
         let b: Vec<_> = (0..n).map(|_| F::rand(&mut rng)).collect();
         let c = inner_product(&a, &b);
 
-        let G_factors: Vec<_> = iter::repeat(<Affine as AffineRepr>::ScalarField::one())
-            .take(n)
-            .collect();
+        let G_factors: Vec<_> =
+            std::iter::repeat_n(<Affine as AffineRepr>::ScalarField::one(), n).collect();
 
         // y_inv is (the inverse of) a random challenge
         let y_inv: F = rng.gen();
@@ -509,7 +511,6 @@ mod tests {
             a_prime
                 .chain(b_prime)
                 .chain(iter::once(c))
-                .map(|s| s.into())
                 .collect::<Vec<_>>()
                 .as_slice(),
         )
@@ -532,7 +533,7 @@ mod tests {
             .verify(
                 n,
                 &mut verifier,
-                iter::repeat(F::one()).take(n),
+                std::iter::repeat_n(F::one(), n),
                 util::exp_iter(y_inv).take(n),
                 &P,
                 &Q,
@@ -549,7 +550,7 @@ mod tests {
             .verify(
                 n,
                 &mut verifier,
-                iter::repeat(F::one()).take(n),
+                std::iter::repeat_n(F::one(), n),
                 util::exp_iter(y_inv).take(n),
                 &P,
                 &Q,

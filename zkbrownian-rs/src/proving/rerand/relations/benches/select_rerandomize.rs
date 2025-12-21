@@ -181,7 +181,8 @@ fn bench_select_and_rerandomize_with_parameters<
     );
 
     {
-        let mut group = c.benchmark_group(&prefix_string);
+        #[allow(unused_variables)]
+        let group = c.benchmark_group(&prefix_string);
 
         #[cfg(feature = "detailed_benchmarks")]
         group.bench_function("prover_gadget", |b| {
@@ -326,13 +327,12 @@ fn bench_select_and_rerandomize_with_parameters<
 
     let group_name = format!("{}_batch_verification", &prefix_string);
     let mut group = c.benchmark_group(group_name);
-    use std::iter;
 
     // for n in [1, 2, 10, 50, 100] {
     for n in [1, 100] {
         group.bench_with_input(
             BenchmarkId::from_parameter(n),
-            &iter::repeat(path.clone()).take(n).collect::<Vec<_>>(),
+            &std::iter::repeat_n(path.clone(), n).collect::<Vec<_>>(),
             |b, proofs| {
                 b.iter(|| {
                     #[cfg(feature = "parallel")]
@@ -355,10 +355,10 @@ fn bench_select_and_rerandomize_with_parameters<
                                             &sr_params,
                                             &curve_tree,
                                         );
-                                        let pallas_vt = pallas_verifier
+
+                                        pallas_verifier
                                             .verification_scalars_and_points(&pallas_proof)
-                                            .unwrap();
-                                        pallas_vt
+                                            .unwrap()
                                     })
                                     .collect();
                                 batch_verify(
@@ -380,10 +380,9 @@ fn bench_select_and_rerandomize_with_parameters<
                                             &curve_tree,
                                         );
 
-                                        let vesta_vt = vesta_verifier
+                                        vesta_verifier
                                             .verification_scalars_and_points(&vesta_proof)
-                                            .unwrap();
-                                        vesta_vt
+                                            .unwrap()
                                     })
                                     .collect();
                                 batch_verify(

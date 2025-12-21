@@ -187,12 +187,12 @@ mod tests {
     use ark_pallas::PallasConfig;
     use bulletproofs::{BulletproofGens, PedersenGens};
 
+    use ark_bls12_381::G1Affine as G1A;
     use ark_ec::CurveGroup;
-    use ark_pallas::Affine as PallasA;
     use ark_ed_on_bls12_381::{JubjubConfig, SWAffine as JubjubA};
+    use ark_pallas::Affine as PallasA;
     use ark_std::UniformRand;
     use ark_vesta::Affine as VestaA;
-    use ark_bls12_381::G1Affine as G1A;
     use merlin::Transcript;
     type PallasScalar = <PallasA as AffineRepr>::ScalarField;
     type JubJubScalar = <JubjubA as AffineRepr>::ScalarField;
@@ -210,7 +210,6 @@ mod tests {
 
         let pc_gens = PedersenGens::<G1A>::default();
         let bp_gens = BulletproofGens::<G1A>::new(1024, 1);
-
 
         let proof = {
             let mut transcript = Transcript::new(b"RerandGadget");
@@ -233,8 +232,7 @@ mod tests {
                 Some(r),
             );
 
-            let proof = prover.prove(&bp_gens).unwrap();
-            proof
+            prover.prove(&bp_gens).unwrap()
         };
 
         let mut transcript = Transcript::new(b"RerandGadget");
@@ -300,9 +298,6 @@ mod tests {
 
         println!("bx2 {}", x2);
         println!("by2 {}", y2);
-
-
-
     }
     #[test]
     fn test_understand_randomize() {
@@ -346,36 +341,13 @@ mod tests {
             );
             println!("metrics after {:?}", prover.metrics());
 
-            let proof = prover.prove(&bp_gens).unwrap();
-            proof
+            prover.prove(&bp_gens).unwrap()
         };
-        return;
-
-        let mut transcript = Transcript::new(b"RerandGadget");
-        let mut verifier: Verifier<_, VestaA> = Verifier::new(&mut transcript);
-        let c_x_var = verifier.allocate(None).unwrap();
-        let c_y_var = verifier.allocate(None).unwrap();
-        let c_x_tilde_var = verifier.allocate(None).unwrap();
-        let c_y_tilde_var = verifier.allocate(None).unwrap();
-
-        re_randomize::<_, _, PallasConfig, _>(
-            &mut verifier,
-            &tables,
-            PointRepresentation {
-                x: c_x_var.into(),
-                y: c_y_var.into(),
-                witness: None,
-            },
-            c_x_tilde_var.into(),
-            c_y_tilde_var.into(),
-            None,
-        );
-
-        println!("{:?}",verifier.verify(&proof, &pc_gens, &bp_gens));
-
+        // Verification code commented out
+        let _ = proof; // Use proof to avoid unused variable warning
     }
 
-        #[test]
+    #[test]
     fn test_re_randomize() {
         let mut rng = rand::thread_rng();
         let h = PallasA::rand(&mut rng);
@@ -410,8 +382,7 @@ mod tests {
                 Some(r),
             );
 
-            let proof = prover.prove(&bp_gens).unwrap();
-            proof
+            prover.prove(&bp_gens).unwrap()
         };
 
         let mut transcript = Transcript::new(b"RerandGadget");
@@ -468,7 +439,7 @@ mod tests {
             let x_i = table.elems[0][index];
             let y_i = table.elems[1][index];
             let t_i = PallasA::new(x_i, y_i);
-            h_r_acc = (h_r_acc + &t_i).into();
+            h_r_acc = (h_r_acc + t_i).into();
         }
         assert_eq!(h_r, h_r_acc);
     }
@@ -504,7 +475,7 @@ mod tests {
             let x_i = table.elems[0][index];
             let y_i = table.elems[1][index];
             let t_i = JubjubA::new(x_i, y_i);
-            h_r_acc = (h_r_acc + &t_i).into();
+            h_r_acc = (h_r_acc + t_i).into();
         }
         assert_eq!(h_r, h_r_acc);
     }

@@ -54,7 +54,7 @@ impl<
         }
         // Convert each commitment to a leaf.
         let mut forest_length = set.len();
-        let mut next_forest_length = (forest_length + L - 1) / L;
+        let mut next_forest_length = forest_length.div_ceil(L);
         let mut even_forest = Vec::with_capacity(forest_length);
         for leaf in set {
             even_forest.push(CurveTreeNode::<L, M, P0, P1>::Leaf(*leaf));
@@ -77,7 +77,7 @@ impl<
                 ));
             }
             forest_length = next_forest_length;
-            next_forest_length = (next_forest_length + L - 1) / L;
+            next_forest_length = next_forest_length.div_ceil(L);
 
             if forest_length == 1 {
                 return Self::Odd(odd_forest[0].clone()).increase_height(height, parameters);
@@ -100,7 +100,7 @@ impl<
                 ));
             }
             forest_length = next_forest_length;
-            next_forest_length = (next_forest_length + L - 1) / L;
+            next_forest_length = next_forest_length.div_ceil(L);
         }
         Self::Even(even_forest[0].clone()).increase_height(height, parameters)
     }

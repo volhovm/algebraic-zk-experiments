@@ -151,13 +151,13 @@ impl<C: AffineRepr> BulletproofGens<C> {
     /// # Inputs
     ///
     /// * `gens_capacity` is the number of generators to precompute
-    ///    for each party.  For rangeproofs, it is sufficient to pass
-    ///    `64`, the maximum bitsize of the rangeproofs.  For circuit
-    ///    proofs, the capacity must be greater than the number of
-    ///    multipliers, rounded up to the next power of two.
+    ///   for each party.  For rangeproofs, it is sufficient to pass
+    ///   `64`, the maximum bitsize of the rangeproofs.  For circuit
+    ///   proofs, the capacity must be greater than the number of
+    ///   multipliers, rounded up to the next power of two.
     ///
     /// * `party_capacity` is the maximum number of parties that can
-    ///    produce an aggregated proof.
+    ///   produce an aggregated proof.
     pub fn new(gens_capacity: usize, party_capacity: usize) -> Self {
         let mut gens = BulletproofGens {
             gens_capacity: 0,
@@ -208,6 +208,7 @@ impl<C: AffineRepr> BulletproofGens<C> {
     }
 
     /// Return an iterator over the aggregation of the parties' G generators with given size `n`.
+    #[allow(dead_code)]
     pub(crate) fn G(&self, n: usize, m: usize) -> impl Iterator<Item = &C> {
         AggregatedGensIter {
             n,
@@ -219,6 +220,7 @@ impl<C: AffineRepr> BulletproofGens<C> {
     }
 
     /// Return an iterator over the aggregation of the parties' H generators with given size `n`.
+    #[allow(dead_code)]
     pub(crate) fn H(&self, n: usize, m: usize) -> impl Iterator<Item = &C> {
         AggregatedGensIter {
             n,
@@ -230,6 +232,7 @@ impl<C: AffineRepr> BulletproofGens<C> {
     }
 }
 
+#[allow(dead_code)]
 struct AggregatedGensIter<'a, C: AffineRepr> {
     array: &'a Vec<Vec<C>>,
     n: usize,
