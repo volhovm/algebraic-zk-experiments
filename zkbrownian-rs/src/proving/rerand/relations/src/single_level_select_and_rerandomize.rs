@@ -225,7 +225,7 @@ mod tests {
 
         // Parent is a commitment to the x coordinate of the children where Delta is added to each child.
         let child_plus_delta = (child + sr_params.even_parameters.delta).into_affine();
-        let child_plus_delta_x = *child_plus_delta.x().unwrap();
+        let child_plus_delta_x = child_plus_delta.x().unwrap();
         let xs = vec![child_plus_delta_x];
         let blinding = VestaScalar::rand(&mut rng);
         let parent = sr_params.odd_parameters.commit(xs.as_slice(), blinding, 0);
@@ -304,7 +304,7 @@ mod tests {
             .collect();
         let xs: Vec<_> = children_plus_delta
             .iter()
-            .map(|child_plus_delta| *child_plus_delta.x().unwrap())
+            .map(|child_plus_delta| child_plus_delta.x().unwrap())
             .collect();
         let blinding = VestaScalar::rand(&mut rng);
         let parent = sr_params.odd_parameters.commit(xs.as_slice(), blinding, 0);

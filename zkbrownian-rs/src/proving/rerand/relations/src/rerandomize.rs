@@ -39,8 +39,8 @@ pub fn build_tables<C: AffineRepr>(h: C) -> Vec<Lookup3Bit<2, C::BaseField>> {
             // Multiply blinding by s
             let hs = h.mul(s).into_affine();
             // todo account for hs = 0 or make sure that it can never happen.
-            table.elems[0][j] = *hs.x().unwrap();
-            table.elems[1][j] = *hs.y().unwrap();
+            table.elems[0][j] = hs.x().unwrap();
+            table.elems[1][j] = hs.y().unwrap();
         }
         tables.push(table);
     }
@@ -94,12 +94,12 @@ pub fn re_randomize<
                 let x_left = if i == 1 {
                     F::zero()
                 } else {
-                    *blinding_accumulator.x().unwrap()
+                    blinding_accumulator.x().unwrap()
                 }; // read before updating blinding accumulator
                 let y_left = if i == 1 {
                     F::zero()
                 } else {
-                    *blinding_accumulator.y().unwrap()
+                    blinding_accumulator.y().unwrap()
                 }; // read before updating blinding accumulator
                 let x_right = x_i_lookup;
                 let y_right = y_i_lookup;
@@ -122,8 +122,8 @@ pub fn re_randomize<
                     Some(index),
                     x_left_minus_x_right_inv,
                     delta,
-                    Some(*blinding_accumulator.x().unwrap()),
-                    Some(*blinding_accumulator.y().unwrap()),
+                    Some(blinding_accumulator.x().unwrap()),
+                    Some(blinding_accumulator.y().unwrap()),
                 )
             }
         };
@@ -164,8 +164,8 @@ pub fn re_randomize<
             let y_left = commitment.y().unwrap();
             let x_right = blinding_accumulator.x().unwrap();
             let y_right = blinding_accumulator.y().unwrap();
-            let delta = (*y_right - y_left) / (*x_right - x_left);
-            (Some(delta), Some(F::one() / (*x_left - x_right)))
+            let delta = (y_right - y_left) / (x_right - x_left);
+            (Some(delta), Some(F::one() / (x_left - x_right)))
         }
         _ => (None, None),
     };
@@ -188,7 +188,7 @@ mod tests {
     use bulletproofs::{BulletproofGens, PedersenGens};
 
     use ark_bls12_381::G1Affine as G1A;
-    use ark_ec::CurveGroup;
+    use ark_ec::{AdditiveGroup, CurveGroup};
     use ark_ed_on_bls12_381::{JubjubConfig, SWAffine as JubjubA};
     use ark_pallas::Affine as PallasA;
     use ark_std::UniformRand;
