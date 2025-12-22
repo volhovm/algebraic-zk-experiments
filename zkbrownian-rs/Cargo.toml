@@ -24,7 +24,7 @@ byteorder = { version = "1", default-features = false }
 digest = { version = "0.9.0", default-features = false }
 educe = { version = "0.6.0", default-features = false, features = [ "Clone" ], optional = true }
 merlin = { version = "2", default-features = false }
-rand = { version = "0.8", features = ["std", "std_rng"] }
+rand = { version = "0.8", optional = true, default-features = false }
 rayon = {version = "1.5.3", optional = true}
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -46,34 +46,8 @@ ark-secq256k1 = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-ed-on-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git" }
 
 
-#[features]
-#default = ["std", "parallel", "asm"]
-#std = ["rand", "rand/std", "thiserror"]
-#asm = ["ark-ff/asm"]
-#parallel = ["ark-ec/parallel", "ark-ff/parallel", "ark-std/parallel", "rayon"]
-
-#[[test]]
-#name = "r1cs"
-#
-#[[bench]]
-#name = "generators"
-#harness = false
-#
-#[[bench]]
-#name = "r1cs"
-#harness = false
-#
-#
-#[dev-dependencies]
-#criterion = "0.5"
-#
-#
-#[[bench]]
-#name = "forward_bench"
-#harness = false
-
 [features]
-default = ["parallel", "r1cs"]
+default = ["std", "parallel", "r1cs"]
 std = [
     "ark-ff/std",
     "ark-ec/std",
@@ -81,7 +55,11 @@ std = [
     "ark-relations/std",
     "ark-crypto-primitives/std",
     "ark-std/std",
+    "rand",
+    "rand?/std",
+    "rand?/std_rng",
 ]
+asm = ["ark-ff/asm"]
 parallel = [
     "std",
     "ark-ff/parallel",
