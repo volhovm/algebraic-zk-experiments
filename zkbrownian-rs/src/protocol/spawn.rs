@@ -6,7 +6,7 @@ use crate::crypto::curve_ops::diversify_with_diversifier;
 use crate::crypto::PoseidonHash;
 use crate::proving::circuits::mock_groth16_proof;
 use crate::types::*;
-use rand::Rng;
+use ark_std::rand::Rng;
 
 /// Spawn function: Spawn(pk, sk, pid, sid) -> m
 ///

@@ -7,8 +7,8 @@ use crate::types::{G1Point, G2Point, G3};
 use ark_bls12_381::{G1Projective, G2Projective};
 use ark_ec::{CurveGroup, PrimeGroup};
 use ark_grumpkin::Projective as GrumpkinProjective;
+use ark_std::rand::Rng;
 use ark_std::UniformRand;
-use rand::Rng;
 
 /// Generate N random generators in G1
 pub fn generate_g1_generators<R: Rng>(rng: &mut R, count: usize) -> Vec<G1Point> {

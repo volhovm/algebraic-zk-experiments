@@ -6,8 +6,8 @@ use crate::crypto::curve::{scalar_to_grumpkin_scalar, G3Proj, ScalarField};
 use crate::types::{DiversifiedPublicKey, Diversifier, PublicKey, SecretKey};
 use ark_ec::{CurveGroup, PrimeGroup};
 use ark_ff::Field;
+use ark_std::rand::Rng;
 use ark_std::UniformRand;
-use rand::Rng;
 
 /// Key generation: generate (sk, pk) pair where pk = G^sk on Grumpkin (G3)
 pub fn keygen<R: Rng>(rng: &mut R) -> (SecretKey, PublicKey) {

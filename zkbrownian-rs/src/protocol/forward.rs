@@ -17,8 +17,8 @@ use crate::types::*;
 use crate::MAX_HOPS;
 use ark_bls12_381::G1Projective;
 use ark_ec::{CurveGroup, PrimeGroup};
+use ark_std::rand::Rng;
 use ark_std::UniformRand;
-use rand::Rng;
 
 /// Information about a single neighbor
 #[derive(Clone, Debug)]
