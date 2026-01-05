@@ -394,3 +394,311 @@ fn test_full_protocol() {
 
     println!("\n=== Test Complete ===");
 }
+
+#[test]
+fn test_full_protocol_concurrent() {
+    use std::sync::{Arc, Mutex};
+    use std::thread;
+    use std::time::Duration;
+
+    println!("=== ZK Brownian Full Protocol Test CONCURRENT ===\n");
+    println!("Testing concurrent packet forwarding with multiple users\n");
+
+    let mut rng = thread_rng();
+
+    // Step 1: Create public parameters
+    let num_nodes = 5;
+    let pp = PublicParams::generate(num_nodes, 10, &mut rng).expect("Failed to generate params");
+    let pp = Arc::new(pp);
+
+    // Step 2: Generate protocol state with multiple users
+    println!(
+        "Step 1: Generating protocol state for {} users...",
+        num_nodes
+    );
+    let generated_state = generate_random_state(&pp, num_nodes, &mut rng);
+
+    for i in 0..num_nodes {
+        println!(
+            "  User {} created with {} neighbors",
+            i,
+            generated_state.users_view[i]
+                .neighbours_view
+                .neighbors
+                .len()
+        );
+    }
+
+    // Print the weight matrix (trust graph)
+    println!("\n  Trust Graph (Weight Matrix):");
+    println!(
+        "  Note: All weights for each node sum to 2^32 = {}",
+        1u64 << 32
+    );
+    for (node_idx, neighbors) in generated_state.weight_matrix.adjacency.iter().enumerate() {
+        println!("  Node {} -> neighbors:", node_idx);
+        for (neighbor_idx, weight) in neighbors {
+            let weight_pct = (*weight as f64 / (1u64 << 32) as f64) * 100.0;
+            println!(
+                "    -> Node {}: weight {} ({:.2}%)",
+                neighbor_idx, weight, weight_pct
+            );
+        }
+    }
+
+    // Step 3: Create thread-safe vectors for each node
+    println!("\nStep 2: Setting up thread-safe message queues...");
+
+    type MessageQueue = Vec<(zkbrownian::types::Message, usize)>;
+    let message_queues: Arc<Vec<Mutex<MessageQueue>>> =
+        Arc::new((0..num_nodes).map(|_| Mutex::new(Vec::new())).collect());
+
+    // Step 4: Each user spawns packets
+    const NUM_PACKETS_PER_USER: usize = 50;
+    const TTL: usize = 5;
+
+    println!(
+        "\nStep 3: Each user spawning {} packets...",
+        NUM_PACKETS_PER_USER
+    );
+
+    // Spawn initial packets and put them into each node's queue
+    for (user_idx, user_view) in generated_state.users_view.iter().enumerate() {
+        let session_id = 1000 + user_idx;
+
+        for packet_id in 0..NUM_PACKETS_PER_USER {
+            let message = spawn(
+                &user_view.secret_key,
+                &user_view.public_key,
+                packet_id as u32,
+                session_id as u64,
+                &mut rng,
+            )
+            .expect("Failed to spawn message");
+
+            message_queues[user_idx]
+                .lock()
+                .unwrap()
+                .push((message, user_idx));
+        }
+
+        println!(
+            "  User {} spawned {} packets (session {})",
+            user_idx, NUM_PACKETS_PER_USER, session_id
+        );
+    }
+
+    // Prepare data for verification (shared across threads)
+    let all_public_keys: Vec<PublicKey> = generated_state
+        .users_view
+        .iter()
+        .map(|user_view| user_view.public_key.clone())
+        .collect();
+    let all_public_keys = Arc::new(all_public_keys);
+
+    let weight_commitment = Arc::new(WeightCommitment {
+        commitment: vec![],
+        metadata: vec![],
+    });
+
+    let merkle_root = generated_state.protocol_state.merkle_tree.root;
+
+    // Create a shared bulletin board
+    let bulletin_board: Arc<Mutex<Vec<BulletinBoardEntry>>> = Arc::new(Mutex::new(Vec::new()));
+
+    println!(
+        "\nStep 4: Starting concurrent forwarding with {} nodes...",
+        num_nodes
+    );
+    let start_time = Instant::now();
+
+    // Step 5: Spawn threads for each node
+    let mut thread_handles = Vec::new();
+
+    for node_idx in 0..num_nodes {
+        let message_queues_clone = Arc::clone(&message_queues);
+        let pp_clone = Arc::clone(&pp);
+        let all_public_keys_clone = Arc::clone(&all_public_keys);
+        let weight_commitment_clone = Arc::clone(&weight_commitment);
+        let bb_clone = Arc::clone(&bulletin_board);
+        let user_view = generated_state.users_view[node_idx].clone();
+
+        let handle = thread::spawn(move || {
+            let mut rng = rand::thread_rng();
+            let mut forwarded_count = 0;
+            let mut verification_count = 0;
+            let mut final_messages_count = 0;
+
+            println!(
+                "  [Node {}] Thread started, processing messages...",
+                node_idx
+            );
+
+            // Each node continuously reads from its queue and processes messages
+            loop {
+                // Read and clear the queue
+                let messages = {
+                    let mut queue = message_queues_clone[node_idx].lock().unwrap();
+                    std::mem::take(&mut *queue) // Take all messages and replace with empty vec
+                };
+
+                if messages.is_empty() {
+                    // No messages, sleep briefly and check again
+                    thread::sleep(Duration::from_millis(10));
+
+                    // Check if we should exit (no more messages anywhere)
+                    let all_empty = message_queues_clone
+                        .iter()
+                        .all(|q| q.lock().unwrap().is_empty());
+                    if all_empty && verification_count > 0 {
+                        break;
+                    }
+                    continue;
+                }
+
+                if verification_count % 10 == 0 && verification_count > 0 {
+                    println!(
+                        "  [Node {}] Processed {} messages (forwarded: {}, final: {})",
+                        node_idx, verification_count, forwarded_count, final_messages_count
+                    );
+                }
+
+                // Process all messages we just read
+                for (message, _origin_user) in messages {
+                    let current_hops = message.hop_count();
+
+                    // Verify the message
+                    let messages_to_verify = vec![message.clone()];
+                    let all_valid = verify_batch(
+                        &messages_to_verify,
+                        merkle_root,
+                        &weight_commitment_clone,
+                        &all_public_keys_clone,
+                        &pp_clone,
+                    )
+                    .expect("Batch verification error");
+
+                    verification_count += 1;
+
+                    if !all_valid {
+                        panic!("Node {} received invalid message", node_idx);
+                    }
+
+                    // Check if message has reached TTL
+                    if current_hops >= TTL {
+                        // Message has reached TTL, save as final
+                        final_messages_count += 1;
+                        if final_messages_count == 1 {
+                            println!(
+                                "  [Node {}] First message reached TTL ({} hops)",
+                                node_idx, current_hops
+                            );
+                        }
+                        // Don't forward, just continue to next message
+                        continue;
+                    }
+
+                    // Forward the message (only if under TTL)
+                    let (new_message, next_node_index, _diversifier) =
+                        forward(&pp_clone, &user_view, &message, &mut rng)
+                            .expect("Failed to forward message");
+
+                    // Debug: log first few forwards with message details
+                    if forwarded_count < 3 {
+                        println!(
+                            "  [Node {}] Forwarding to Node {} (hops: {} -> {}) [sid={}, pid={}]",
+                            node_idx,
+                            next_node_index,
+                            current_hops,
+                            new_message.hop_count(),
+                            message.sid,
+                            message.pid
+                        );
+                    }
+
+                    // Post to bulletin board
+                    let entry = BulletinBoardEntry {
+                        message: new_message.clone(),
+                        receiver_index: next_node_index,
+                        addressed_to: new_message.hops.last().unwrap().ppk.clone(),
+                    };
+
+                    bb_clone.lock().unwrap().push(entry);
+                    forwarded_count += 1;
+
+                    // Send to next node's queue
+                    message_queues_clone[next_node_index]
+                        .lock()
+                        .unwrap()
+                        .push((new_message, _origin_user));
+                }
+            }
+
+            println!(
+                "  [Node {}] Thread finishing. Total: {} verified, {} forwarded, {} final",
+                node_idx, verification_count, forwarded_count, final_messages_count
+            );
+
+            (forwarded_count, verification_count, final_messages_count)
+        });
+
+        thread_handles.push(handle);
+    }
+
+    println!("  All threads spawned. Waiting for completion...");
+
+    // Wait for all threads to complete
+    let mut total_forwarded = 0;
+    let mut total_verifications = 0;
+    let mut total_final_messages = 0;
+
+    for handle in thread_handles {
+        let (forwarded, verified, final_msgs) = handle.join().expect("Thread panicked");
+        total_forwarded += forwarded;
+        total_verifications += verified;
+        total_final_messages += final_msgs;
+    }
+
+    let elapsed = start_time.elapsed();
+
+    // Collect all bulletin board messages
+    let bulletin_board_messages = bulletin_board.lock().unwrap().clone();
+
+    println!(
+        "\n  Concurrent forwarding complete in {:.2} ms",
+        elapsed.as_secs_f64() * 1000.0
+    );
+    println!("  Total messages forwarded: {}", total_forwarded);
+    println!(
+        "  Total messages that reached TTL: {}",
+        total_final_messages
+    );
+    println!("  Total verifications: {}", total_verifications);
+
+    // Step 6: Summary
+    println!("\n=== Protocol Summary ===");
+    println!(
+        "  Total messages on bulletin board: {}",
+        bulletin_board_messages.len()
+    );
+    println!(
+        "  Note: With true concurrency, nodes perform more than {} rounds",
+        TTL
+    );
+    println!("  Each node processes messages as they arrive, leading to more total hops");
+
+    // Count messages by hop count
+    let mut hop_counts = std::collections::HashMap::new();
+    for entry in &bulletin_board_messages {
+        *hop_counts.entry(entry.message.hop_count()).or_insert(0) += 1;
+    }
+
+    println!("\n  Messages by hop count:");
+    let mut sorted_hops: Vec<_> = hop_counts.keys().collect();
+    sorted_hops.sort();
+    for hop in sorted_hops {
+        println!("    {} hops: {} messages", hop, hop_counts[hop]);
+    }
+
+    println!("\n=== Test Complete ===");
+}

@@ -5,7 +5,7 @@
 use crate::crypto::curve_ops::compute_prf_exponent;
 use crate::types::{G1Point, PrfOutput, ScalarField, SecretKey};
 use ark_bls12_381::G1Projective;
-use ark_ec::{AffineRepr, CurveGroup};
+use ark_ec::CurveGroup;
 
 #[cfg(test)]
 use ark_ec::PrimeGroup;
@@ -35,25 +35,23 @@ pub fn compute_prf(theta: &ScalarField, sk: &SecretKey, generator: &G1Point) -> 
 /// This converts the PRF output φ (a G1 point) to a 32-bit value ρ
 /// which is then used with the weight matrix to select the next hop
 pub fn extract_routing_value(phi: &PrfOutput) -> u32 {
-    // Convert the x-coordinate of the point to bytes
-    // Take first 4 bytes as u32
-    let x_coord = phi.phi.x();
+    // TODO can we do this without SHA256..? Just taking x or y coordinate? Is this uniform enough?
 
-    // Serialize the x-coordinate
-    // For now, use a simple hash of the serialized bytes
-    // TODO: Implement proper deterministic extraction
-    let bytes = x_coord
-        .expect("Point should have x-coordinate")
-        .to_string()
-        .as_bytes()
-        .to_vec();
+    // Hash the point to get a uniformly distributed u32
+    use ark_serialize::CanonicalSerialize;
+    use sha2::{Digest, Sha256};
 
-    if bytes.len() >= 4 {
-        u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
-    } else {
-        // Fallback if serialization is too short
-        0
-    }
+    // Serialize the entire point (not just x-coordinate)
+    let mut bytes = Vec::new();
+    phi.phi
+        .serialize_compressed(&mut bytes)
+        .expect("Serialization should not fail");
+
+    // Hash to get uniform distribution
+    let hash = Sha256::digest(&bytes);
+
+    // Take first 4 bytes of hash as u32
+    u32::from_be_bytes([hash[0], hash[1], hash[2], hash[3]])
 }
 
 #[cfg(test)]

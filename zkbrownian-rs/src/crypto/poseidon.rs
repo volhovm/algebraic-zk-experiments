@@ -6,40 +6,41 @@
 //! - General-purpose ZK-friendly hashing
 
 use crate::types::{PacketId, ScalarField, SessionId};
+use ark_ff::PrimeField;
+use ark_serialize::CanonicalSerialize;
+use sha2::{Digest, Sha256};
 
-/// Poseidon hash configuration (stub)
-#[derive(Default)]
-pub struct PoseidonConfig {
-    // Round constants, MDS matrix, etc.
-    // TODO: Implement proper Poseidon parameters for BLS12-381
-}
-
-/// Poseidon hasher
-pub struct PoseidonHash {
-    _config: PoseidonConfig,
-}
+/// Poseidon hasher (using SHA256 as a placeholder for now)
+pub struct PoseidonHash {}
 
 impl PoseidonHash {
     pub fn new() -> Self {
-        Self {
-            _config: PoseidonConfig::default(),
-        }
+        Self {}
     }
 
     /// Hash arbitrary field elements
     pub fn hash(&self, inputs: &[ScalarField]) -> ScalarField {
-        // TODO: Implement actual Poseidon hash
-        // For now, this is a placeholder
         if inputs.is_empty() {
             return ScalarField::from(0u64);
         }
 
-        // Simple placeholder: sum inputs (NOT secure, just for structure)
-        let mut result = ScalarField::from(0u64);
+        // TODO FIXME USE POSEIDON or make sure the hash value is big enough so that `mod` Fp is uniform.
+        // Serialize all inputs and hash with SHA256
+        let mut hasher = Sha256::new();
         for input in inputs {
-            result += input;
+            let mut bytes = Vec::new();
+            input
+                .serialize_compressed(&mut bytes)
+                .expect("Serialization should not fail");
+            hasher.update(&bytes);
         }
-        result
+
+        let hash = hasher.finalize();
+        let mut hash_bytes = [0u8; 32];
+        hash_bytes.copy_from_slice(&hash);
+
+        // Convert to scalar field element
+        ScalarField::from_be_bytes_mod_order(&hash_bytes)
     }
 
     /// Hash theta derivation: θ = Hash(φ_ν, sid, pid, ν)

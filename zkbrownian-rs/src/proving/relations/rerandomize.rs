@@ -299,6 +299,7 @@ mod tests {
         println!("bx2 {}", x2);
         println!("by2 {}", y2);
     }
+
     #[test]
     fn test_understand_randomize() {
         let mut rng = rand::thread_rng();

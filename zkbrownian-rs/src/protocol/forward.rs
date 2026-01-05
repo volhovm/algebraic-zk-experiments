@@ -461,7 +461,7 @@ fn select_next_hop_from_view(
 
     // Build cumulative distribution from neighbor weights
     let mut cumulative: u64 = 0;
-    for neighbor in &neighbours_view.neighbors {
+    for neighbor in neighbours_view.neighbors.iter() {
         let v1 = cumulative;
         cumulative += neighbor.weight as u64;
         let v2 = cumulative;
@@ -473,14 +473,11 @@ fn select_next_hop_from_view(
 
     // If we get here, ρ didn't fall into any bucket (shouldn't happen if weights sum correctly)
     // Default to last neighbor
-    let last_neighbor = neighbours_view.neighbors.last().unwrap();
-    let total_cumulative = cumulative;
-    Ok((
-        last_neighbor.index,
-        last_neighbor.public_key.clone(),
-        total_cumulative - last_neighbor.weight as u64,
-        total_cumulative,
-    ))
+    println!(
+        "[DEBUG select] rho={} fell outside range, total_cumulative={}, using last neighbor",
+        rho, cumulative
+    );
+    return Err(ProtocolError::InvalidWeightSelection);
 }
 
 /// Type alias for the complex return type of generate_forward_proof
@@ -538,12 +535,29 @@ pub fn forward<R: Rng>(
         // φ_0 = 0 (dummy value)
         ScalarField::from(0u64)
     } else {
-        // Convert G1 point to scalar for hashing (simplified)
-        // TODO: Better conversion from G1 point to field element
-        let _phi_point = message
+        // Convert G1 point to scalar for hashing
+        let phi_point = message
             .latest_phi()
             .ok_or_else(|| ProtocolError::CryptoError("No previous PRF output".to_string()))?;
-        ScalarField::from(1u64) // Placeholder
+
+        // Hash the point to get a scalar field element
+        // This is a deterministic way to convert from base field to scalar field
+        use ark_serialize::CanonicalSerialize;
+        let mut bytes = Vec::new();
+        phi_point
+            .phi
+            .serialize_compressed(&mut bytes)
+            .map_err(|_| ProtocolError::CryptoError("Failed to serialize phi".to_string()))?;
+
+        // Hash the serialized bytes to get a scalar
+        use sha2::{Digest, Sha256};
+        let hash = Sha256::digest(&bytes);
+        let mut hash_bytes = [0u8; 32];
+        hash_bytes.copy_from_slice(&hash);
+
+        // Convert hash to scalar field element (this is safe as we're reducing modulo the field order)
+        use ark_ff::PrimeField;
+        ScalarField::from_be_bytes_mod_order(&hash_bytes)
     };
 
     let theta = hasher.hash_theta(&phi_prev, message.sid, message.pid, nu);
