@@ -454,7 +454,7 @@ fn test_full_protocol_concurrent() {
         Arc::new((0..num_nodes).map(|_| Mutex::new(Vec::new())).collect());
 
     // Step 4: Each user spawns packets
-    const NUM_PACKETS_PER_USER: usize = 50;
+    const NUM_PACKETS_PER_USER: usize = 250;
     const TTL: usize = 5;
 
     println!(
@@ -529,6 +529,14 @@ fn test_full_protocol_concurrent() {
             let mut verification_count = 0;
             let mut final_messages_count = 0;
 
+            // Timing measurements
+            let thread_start = Instant::now();
+            let mut total_verification_time = Duration::ZERO;
+            let mut total_forward_time = Duration::ZERO;
+            let mut total_idle_time = Duration::ZERO;
+            let mut idle_iterations = 0;
+            let mut processing_iterations = 0;
+
             println!(
                 "  [Node {}] Thread started, processing messages...",
                 node_idx
@@ -536,6 +544,8 @@ fn test_full_protocol_concurrent() {
 
             // Each node continuously reads from its queue and processes messages
             loop {
+                let loop_start = Instant::now();
+
                 // Read and clear the queue
                 let messages = {
                     let mut queue = message_queues_clone[node_idx].lock().unwrap();
@@ -544,7 +554,9 @@ fn test_full_protocol_concurrent() {
 
                 if messages.is_empty() {
                     // No messages, sleep briefly and check again
+                    idle_iterations += 1;
                     thread::sleep(Duration::from_millis(10));
+                    total_idle_time += loop_start.elapsed();
 
                     // Check if we should exit (no more messages anywhere)
                     let all_empty = message_queues_clone
@@ -555,6 +567,8 @@ fn test_full_protocol_concurrent() {
                     }
                     continue;
                 }
+
+                processing_iterations += 1;
 
                 if verification_count % 10 == 0 && verification_count > 0 {
                     println!(
@@ -568,6 +582,7 @@ fn test_full_protocol_concurrent() {
                     let current_hops = message.hop_count();
 
                     // Verify the message
+                    let verify_start = Instant::now();
                     let messages_to_verify = vec![message.clone()];
                     let all_valid = verify_batch(
                         &messages_to_verify,
@@ -577,6 +592,7 @@ fn test_full_protocol_concurrent() {
                         &pp_clone,
                     )
                     .expect("Batch verification error");
+                    total_verification_time += verify_start.elapsed();
 
                     verification_count += 1;
 
@@ -599,9 +615,11 @@ fn test_full_protocol_concurrent() {
                     }
 
                     // Forward the message (only if under TTL)
+                    let forward_start = Instant::now();
                     let (new_message, next_node_index, _diversifier) =
                         forward(&pp_clone, &user_view, &message, &mut rng)
                             .expect("Failed to forward message");
+                    total_forward_time += forward_start.elapsed();
 
                     // Debug: log first few forwards with message details
                     if forwarded_count < 3 {
@@ -634,12 +652,45 @@ fn test_full_protocol_concurrent() {
                 }
             }
 
+            let total_thread_time = thread_start.elapsed();
+            let active_time = total_thread_time - total_idle_time;
+
             println!(
                 "  [Node {}] Thread finishing. Total: {} verified, {} forwarded, {} final",
                 node_idx, verification_count, forwarded_count, final_messages_count
             );
+            println!(
+                "  [Node {}] Timing: total={:.2}ms, active={:.2}ms ({:.1}%), idle={:.2}ms ({:.1}%)",
+                node_idx,
+                total_thread_time.as_secs_f64() * 1000.0,
+                active_time.as_secs_f64() * 1000.0,
+                (active_time.as_secs_f64() / total_thread_time.as_secs_f64()) * 100.0,
+                total_idle_time.as_secs_f64() * 1000.0,
+                (total_idle_time.as_secs_f64() / total_thread_time.as_secs_f64()) * 100.0
+            );
+            println!(
+                "  [Node {}] CPU breakdown: verify={:.2}ms ({:.1}%), forward={:.2}ms ({:.1}%)",
+                node_idx,
+                total_verification_time.as_secs_f64() * 1000.0,
+                (total_verification_time.as_secs_f64() / active_time.as_secs_f64()) * 100.0,
+                total_forward_time.as_secs_f64() * 1000.0,
+                (total_forward_time.as_secs_f64() / active_time.as_secs_f64()) * 100.0
+            );
+            println!(
+                "  [Node {}] Iterations: processing={}, idle={}",
+                node_idx, processing_iterations, idle_iterations
+            );
 
-            (forwarded_count, verification_count, final_messages_count)
+            (
+                forwarded_count,
+                verification_count,
+                final_messages_count,
+                total_thread_time,
+                active_time,
+                total_idle_time,
+                total_verification_time,
+                total_forward_time,
+            )
         });
 
         thread_handles.push(handle);
@@ -651,12 +702,31 @@ fn test_full_protocol_concurrent() {
     let mut total_forwarded = 0;
     let mut total_verifications = 0;
     let mut total_final_messages = 0;
+    let mut aggregate_total_time = Duration::ZERO;
+    let mut aggregate_active_time = Duration::ZERO;
+    let mut aggregate_idle_time = Duration::ZERO;
+    let mut aggregate_verify_time = Duration::ZERO;
+    let mut aggregate_forward_time = Duration::ZERO;
 
     for handle in thread_handles {
-        let (forwarded, verified, final_msgs) = handle.join().expect("Thread panicked");
+        let (
+            forwarded,
+            verified,
+            final_msgs,
+            total_time,
+            active_time,
+            idle_time,
+            verify_time,
+            forward_time,
+        ) = handle.join().expect("Thread panicked");
         total_forwarded += forwarded;
         total_verifications += verified;
         total_final_messages += final_msgs;
+        aggregate_total_time += total_time;
+        aggregate_active_time += active_time;
+        aggregate_idle_time += idle_time;
+        aggregate_verify_time += verify_time;
+        aggregate_forward_time += forward_time;
     }
 
     let elapsed = start_time.elapsed();
@@ -665,7 +735,7 @@ fn test_full_protocol_concurrent() {
     let bulletin_board_messages = bulletin_board.lock().unwrap().clone();
 
     println!(
-        "\n  Concurrent forwarding complete in {:.2} ms",
+        "\n  Concurrent forwarding complete in {:.2} ms (wall-clock time)",
         elapsed.as_secs_f64() * 1000.0
     );
     println!("  Total messages forwarded: {}", total_forwarded);
@@ -674,6 +744,54 @@ fn test_full_protocol_concurrent() {
         total_final_messages
     );
     println!("  Total verifications: {}", total_verifications);
+
+    // Aggregate timing statistics
+    println!("\n=== Aggregate CPU Time Across All Threads ===");
+    println!(
+        "  Total CPU time (sum of all threads): {:.2} ms",
+        aggregate_total_time.as_secs_f64() * 1000.0
+    );
+    println!(
+        "  Active CPU time: {:.2} ms ({:.1}%)",
+        aggregate_active_time.as_secs_f64() * 1000.0,
+        (aggregate_active_time.as_secs_f64() / aggregate_total_time.as_secs_f64()) * 100.0
+    );
+    println!(
+        "  Idle CPU time: {:.2} ms ({:.1}%)",
+        aggregate_idle_time.as_secs_f64() * 1000.0,
+        (aggregate_idle_time.as_secs_f64() / aggregate_total_time.as_secs_f64()) * 100.0
+    );
+    println!(
+        "  Time in verification: {:.2} ms ({:.1}% of active)",
+        aggregate_verify_time.as_secs_f64() * 1000.0,
+        (aggregate_verify_time.as_secs_f64() / aggregate_active_time.as_secs_f64()) * 100.0
+    );
+    println!(
+        "  Time in forwarding: {:.2} ms ({:.1}% of active)",
+        aggregate_forward_time.as_secs_f64() * 1000.0,
+        (aggregate_forward_time.as_secs_f64() / aggregate_active_time.as_secs_f64()) * 100.0
+    );
+
+    // Parallelism metrics
+    let parallelism = aggregate_total_time.as_secs_f64() / elapsed.as_secs_f64();
+    println!(
+        "  Average parallelism: {:.2}x ({} threads)",
+        parallelism, num_nodes
+    );
+
+    // Per-operation averages
+    if total_verifications > 0 {
+        println!(
+            "  Average verification time: {:.2} ms/msg",
+            (aggregate_verify_time.as_secs_f64() * 1000.0) / total_verifications as f64
+        );
+    }
+    if total_forwarded > 0 {
+        println!(
+            "  Average forward time: {:.2} ms/msg",
+            (aggregate_forward_time.as_secs_f64() * 1000.0) / total_forwarded as f64
+        );
+    }
 
     // Step 6: Summary
     println!("\n=== Protocol Summary ===");
