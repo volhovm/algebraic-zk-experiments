@@ -477,7 +477,7 @@ fn select_next_hop_from_view(
         "[DEBUG select] rho={} fell outside range, total_cumulative={}, using last neighbor",
         rho, cumulative
     );
-    return Err(ProtocolError::InvalidWeightSelection);
+    Err(ProtocolError::InvalidWeightSelection)
 }
 
 /// Type alias for the complex return type of generate_forward_proof

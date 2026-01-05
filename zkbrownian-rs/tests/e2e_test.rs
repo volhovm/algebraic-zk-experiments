@@ -577,28 +577,31 @@ fn test_full_protocol_concurrent() {
                     );
                 }
 
+                // Verify the message
+                let verify_start = Instant::now();
+                let all_valid = verify_batch(
+                    &messages
+                        .clone()
+                        .into_iter()
+                        .map(|(m, _)| m)
+                        .collect::<Vec<_>>(),
+                    merkle_root,
+                    &weight_commitment_clone,
+                    &all_public_keys_clone,
+                    &pp_clone,
+                )
+                .expect("Batch verification error");
+                total_verification_time += verify_start.elapsed();
+
+                verification_count += messages.len();
+
+                if !all_valid {
+                    panic!("Node {} received invalid message", node_idx);
+                }
+
                 // Process all messages we just read
                 for (message, _origin_user) in messages {
                     let current_hops = message.hop_count();
-
-                    // Verify the message
-                    let verify_start = Instant::now();
-                    let messages_to_verify = vec![message.clone()];
-                    let all_valid = verify_batch(
-                        &messages_to_verify,
-                        merkle_root,
-                        &weight_commitment_clone,
-                        &all_public_keys_clone,
-                        &pp_clone,
-                    )
-                    .expect("Batch verification error");
-                    total_verification_time += verify_start.elapsed();
-
-                    verification_count += 1;
-
-                    if !all_valid {
-                        panic!("Node {} received invalid message", node_idx);
-                    }
 
                     // Check if message has reached TTL
                     if current_hops >= TTL {
