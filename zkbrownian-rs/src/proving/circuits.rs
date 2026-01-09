@@ -8,10 +8,10 @@
 //! - π_{4,G1}: Lightweight Schnorr bridging proof in G1
 //! - π_{4,G2}: Public key operations proof in G2
 
+use crate::proving::bulletproofs::{BulletproofGens, PedersenGens};
 use crate::types::{ProofGroth16, ProtocolError, ProtocolResult, ScalarField, Schnorr, G1, G3};
-use ark_bls12_381::G1Projective;
+use ark_bls12_381::{G1Affine as G1A, G1Projective};
 use ark_ec::CurveGroup;
-use ark_ff::PrimeField;
 use ark_std::UniformRand;
 
 /// Create a mock Groth16 proof with random group elements
@@ -347,6 +347,16 @@ pub struct SchnorrBridgingWitness {
     pub r_star: ScalarField,
     /// Blinding factor r_r_star for pk_r_star = pk_r * H^{r_r_star}
     pub r_r_star: ScalarField,
+
+    // Blinded G3 points (precomputed in forward.rs)
+    /// pk_star as G3 point
+    pub pk_star_g3: G3,
+    /// pk_star_blinded = pk_star + H * r_star
+    pub pk_star_blinded: G3,
+    /// pk_r_star as G3 point
+    pub pk_r_star_g3: G3,
+    /// pk_r_star_blinded = pk_r_star + H * r_r_star
+    pub pk_r_star_blinded: G3,
 }
 
 /// Generate Schnorr bridging proof π_{4,G1}
@@ -365,20 +375,25 @@ pub struct SchnorrBridgingWitness {
 /// # Arguments
 /// * `instance` - Public inputs (coordinate commitments and other commitments)
 /// * `witness` - Private inputs (all exponents and coordinates)
+/// * `pc_gens` - Pedersen commitment generators
+/// * `bp_gens` - Bulletproof generators
+/// * `h_g3` - G3 blinding generator H (from precompute)
+/// * `g3_tables` - Precomputed lookup tables for rerandomize gadget
 ///
 /// # Returns
 /// Schnorr proof in G1
 pub fn prove_schnorr_bridging(
     _instance: &SchnorrBridgingInstance,
     witness: &SchnorrBridgingWitness,
+    pc_gens: &PedersenGens<G1A>,
+    bp_gens: &BulletproofGens<G1A>,
+    _h_g3: &G3,
+    g3_tables: &[crate::proving::relations::lookup::Lookup3Bit<2, ScalarField>],
 ) -> ProtocolResult<Schnorr<G1>> {
+    use crate::crypto::curve::scalar_to_g3_scalar;
     use crate::proving::bulletproofs::r1cs::*;
-    use crate::proving::bulletproofs::{BulletproofGens, PedersenGens};
     use crate::proving::relations::curve::PointRepresentation;
-    use crate::proving::relations::rerandomize::{build_tables, re_randomize};
-    use crate::types::G3;
-    use ark_bls12_381::G1Affine as G1A;
-    use ark_ec::CurveGroup;
+    use crate::proving::relations::rerandomize::re_randomize;
     use merlin::Transcript;
 
     // TODO: This proof must internally prove that:
@@ -398,51 +413,21 @@ pub fn prove_schnorr_bridging(
     // The idea is to prove that the coordinate commitments (in G1 of BLS12-381)
     // correctly encode the coordinates of points on the G3 curve.
 
-    // Convert the BLS12-381 G1 coordinate commitments to G3 affine points
-    // by extracting their coordinates as base field elements.
-    // Note: This is a simplified partial implementation. In a full implementation,
-    // we would need to properly handle the cross-curve commitment verification.
+    // Use precomputed G3 points and tables from witness and precompute
+    // All these values are computed in forward.rs and passed here to avoid duplication
+    let pk_star_g3 = witness.pk_star_g3;
+    let pk_star_blinded = witness.pk_star_blinded;
+    let pk_r_star_g3 = witness.pk_r_star_g3;
+    let pk_r_star_blinded = witness.pk_r_star_blinded;
 
-    // For now, create a mock proof structure that includes the bulletproofs
-    // We'll construct two separate bulletproofs for the two rerandomize relations
-
-    // Setup bulletproof generators
-    let pc_gens = PedersenGens::<G1A>::default();
-    let bp_gens = BulletproofGens::<G1A>::new(1024, 1);
-
-    // Get a random blinding base H for G3
-    // In a real implementation, this should be a deterministically generated point
-    let mut rng = ark_std::test_rng();
-    use ark_std::UniformRand;
-    let h_g3 = G3::rand(&mut rng);
-    let tables = build_tables(h_g3);
-
-    // Convert witness randomness from BLS12-381 scalar field (G3 base field)
-    // to G3 scalar field for the rerandomize gadget.
-    use crate::crypto::curve::G3ScalarField;
-    use ark_ff::BigInteger;
-    let r_star_g3 =
-        G3ScalarField::from_le_bytes_mod_order(&witness.r_star.into_bigint().to_bytes_le());
-    let r_r_star_g3 =
-        G3ScalarField::from_le_bytes_mod_order(&witness.r_r_star.into_bigint().to_bytes_le());
-
-    // Create G3 points from witness coordinates
-    // pk_star_x, pk_star_y are coordinates in G3's base field (= BLS12-381 Fr)
-    let pk_star_g3 = G3::new(witness.pk_star_x, witness.pk_star_y);
-
-    // Compute the blinded version: pk_star_blinded = pk_star + H * r_star
-    let h_r_star = (h_g3 * r_star_g3).into_affine();
-    let pk_star_blinded = (pk_star_g3 + h_r_star).into_affine();
-
-    // Similarly for pk_r_star
-    let pk_r_star_g3 = G3::new(witness.pk_r_star_x, witness.pk_r_star_y);
-    let h_r_r_star = (h_g3 * r_r_star_g3).into_affine();
-    let pk_r_star_blinded = (pk_r_star_g3 + h_r_r_star).into_affine();
+    // Convert randomness to G3 scalar field for the rerandomize gadget
+    let r_star_g3 = scalar_to_g3_scalar(&witness.r_star);
+    let r_r_star_g3 = scalar_to_g3_scalar(&witness.r_r_star);
 
     // Prove first rerandomize: pk_star_coord
     let proof1 = {
         let mut transcript = Transcript::new(b"SchnorrBridging-pkstar");
-        let mut prover = Prover::new(&pc_gens, &mut transcript);
+        let mut prover = Prover::new(pc_gens, &mut transcript);
 
         let c_x_var = prover.allocate(Some(pk_star_g3.x)).unwrap();
         let c_y_var = prover.allocate(Some(pk_star_g3.y)).unwrap();
@@ -451,7 +436,7 @@ pub fn prove_schnorr_bridging(
 
         re_randomize(
             &mut prover,
-            &tables,
+            g3_tables,
             PointRepresentation {
                 x: c_x_var.into(),
                 y: c_y_var.into(),
@@ -462,13 +447,13 @@ pub fn prove_schnorr_bridging(
             Some(r_star_g3),
         );
 
-        prover.prove(&bp_gens).unwrap()
+        prover.prove(bp_gens).unwrap()
     };
 
     // Prove second rerandomize: pk_r_star_coord
     let proof2 = {
         let mut transcript = Transcript::new(b"SchnorrBridging-pkrstar");
-        let mut prover = Prover::new(&pc_gens, &mut transcript);
+        let mut prover = Prover::new(pc_gens, &mut transcript);
 
         let c_x_var = prover.allocate(Some(pk_r_star_g3.x)).unwrap();
         let c_y_var = prover.allocate(Some(pk_r_star_g3.y)).unwrap();
@@ -477,7 +462,7 @@ pub fn prove_schnorr_bridging(
 
         re_randomize(
             &mut prover,
-            &tables,
+            g3_tables,
             PointRepresentation {
                 x: c_x_var.into(),
                 y: c_y_var.into(),
@@ -488,7 +473,7 @@ pub fn prove_schnorr_bridging(
             Some(r_r_star_g3),
         );
 
-        prover.prove(&bp_gens).unwrap()
+        prover.prove(bp_gens).unwrap()
     };
 
     // Serialize both proofs together
@@ -521,13 +506,13 @@ pub fn prove_schnorr_bridging(
 pub fn verify_schnorr_bridging(
     proof: &Schnorr<G1>,
     _instance: &SchnorrBridgingInstance,
+    pc_gens: &PedersenGens<G1A>,
+    bp_gens: &BulletproofGens<G1A>,
 ) -> ProtocolResult<bool> {
     use crate::proving::bulletproofs::r1cs::*;
-    use crate::proving::bulletproofs::{BulletproofGens, PedersenGens};
     use crate::proving::relations::curve::PointRepresentation;
     use crate::proving::relations::rerandomize::{build_tables, re_randomize};
     use crate::types::G3;
-    use ark_bls12_381::G1Affine as G1A;
     use ark_ed_on_bls12_381::JubjubConfig;
     use ark_serialize::CanonicalDeserialize;
     use ark_std::UniformRand;
@@ -535,10 +520,6 @@ pub fn verify_schnorr_bridging(
 
     // TODO: Actual Schnorr proof verification for all relations
     // For now, we only verify the 2x rerandomize relations
-
-    // Setup bulletproof generators (same as in proving)
-    let pc_gens = PedersenGens::<G1A>::default();
-    let bp_gens = BulletproofGens::<G1A>::new(1024, 1);
 
     // Get the same blinding base H for G3 (deterministically)
     // In a real implementation, this should be the same deterministically generated point
@@ -576,7 +557,7 @@ pub fn verify_schnorr_bridging(
             None,
         );
 
-        verifier.verify(&proof1, &pc_gens, &bp_gens).map_err(|e| {
+        verifier.verify(&proof1, pc_gens, bp_gens).map_err(|e| {
             ProtocolError::CryptoError(format!("Verification failed for pk_star: {:?}", e))
         })?;
     }
@@ -604,7 +585,7 @@ pub fn verify_schnorr_bridging(
             None,
         );
 
-        verifier.verify(&proof2, &pc_gens, &bp_gens).map_err(|e| {
+        verifier.verify(&proof2, pc_gens, bp_gens).map_err(|e| {
             ProtocolError::CryptoError(format!("Verification failed for pk_r_star: {:?}", e))
         })?;
     }

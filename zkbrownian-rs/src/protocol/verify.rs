@@ -156,7 +156,12 @@ pub fn verify_batch(
                 g_rho,
             };
 
-            if !verify_schnorr_bridging(&hop.pi.pi_4_g1, &pi_4_g1_instance)? {
+            if !verify_schnorr_bridging(
+                &hop.pi.pi_4_g1,
+                &pi_4_g1_instance,
+                &params.pc_gens,
+                &params.bp_gens,
+            )? {
                 return Ok(false);
             }
 
@@ -387,7 +392,12 @@ fn verify_hop_proof(
     };
 
     // Verify π_{4,G1}
-    if !verify_schnorr_bridging(&hop.pi.pi_4_g1, &pi_4_g1_instance)? {
+    if !verify_schnorr_bridging(
+        &hop.pi.pi_4_g1,
+        &pi_4_g1_instance,
+        &params.pc_gens,
+        &params.bp_gens,
+    )? {
         return Ok(false);
     }
 

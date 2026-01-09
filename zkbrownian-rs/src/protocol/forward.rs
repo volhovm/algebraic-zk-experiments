@@ -67,6 +67,16 @@ pub struct LocalPrecompute {
     pub c_v1_precomputed: Vec<(G1Projective, u64)>, // (commitment, v1 value)
     /// Precomputed commitments C_v2 for each neighbor (with r_v2=0)
     pub c_v2_precomputed: Vec<(G1Projective, u64)>, // (commitment, v2 value)
+
+    /// Bulletproof generators for Pedersen commitments
+    pub pc_gens: crate::proving::bulletproofs::PedersenGens<ark_bls12_381::G1Affine>,
+    /// Bulletproof generators for R1CS proofs
+    pub bp_gens: crate::proving::bulletproofs::BulletproofGens<ark_bls12_381::G1Affine>,
+
+    /// G3 blinding generator H (from pp.generators.g3(1))
+    pub h_g3: G3,
+    /// Precomputed lookup tables for rerandomize gadget
+    pub g3_tables: Vec<crate::proving::relations::lookup::Lookup3Bit<2, ScalarField>>,
 }
 
 /// A single user's complete view of the protocol
@@ -285,6 +295,16 @@ fn generate_precompute(
         pi_2_weights.push(pi_2);
     }
 
+    // Get G3 blinding generator H (from pp.generators.g3(1))
+    let h3_base = pp
+        .generators
+        .g3(1)
+        .ok_or_else(|| ProtocolError::CryptoError("Missing G3 generator 1".to_string()))?;
+
+    // Build lookup tables for rerandomize gadget
+    use crate::proving::relations::rerandomize::build_tables;
+    let g3_tables = build_tables(*h3_base);
+
     Ok(LocalPrecompute {
         pi_1_sender,
         c11_precomputed,
@@ -295,6 +315,10 @@ fn generate_precompute(
         pi_2_weights,
         c_v1_precomputed: c_v1_precomputed_vec,
         c_v2_precomputed: c_v2_precomputed_vec,
+        pc_gens: pp.pc_gens.clone(),
+        bp_gens: pp.bp_gens.clone(),
+        h_g3: *h3_base,
+        g3_tables,
     })
 }
 
@@ -914,7 +938,7 @@ fn generate_forward_proof(
     // These proofs connect the public key representations across different groups
 
     // Get G3 generators for creating pk_star and pk_r_star
-    use crate::crypto::curve::{scalar_to_g3_scalar, G3Proj};
+    use crate::crypto::curve::{g3_base_to_scalar, scalar_to_g3_scalar, G3Proj};
     use crate::crypto::prf::extract_routing_value;
 
     let g3_base = pp
@@ -947,14 +971,22 @@ fn generate_forward_proof(
     let pk_r_star = (pk_r_proj + h3_proj * r_r_star_g3).into_affine();
 
     // Extract coordinates and convert to BLS12-381 scalar field
-    let pk_star_x_scalar =
-        ScalarField::from_le_bytes_mod_order(&pk_star.x.into_bigint().to_bytes_le());
-    let pk_star_y_scalar =
-        ScalarField::from_le_bytes_mod_order(&pk_star.y.into_bigint().to_bytes_le());
-    let pk_r_star_x_scalar =
-        ScalarField::from_le_bytes_mod_order(&pk_r_star.x.into_bigint().to_bytes_le());
-    let pk_r_star_y_scalar =
-        ScalarField::from_le_bytes_mod_order(&pk_r_star.y.into_bigint().to_bytes_le());
+    // G3's base field is the same as BLS12-381 Fr, so we can use a direct conversion
+    let pk_star_x_scalar = g3_base_to_scalar(&pk_star.x);
+    let pk_star_y_scalar = g3_base_to_scalar(&pk_star.y);
+    let pk_r_star_x_scalar = g3_base_to_scalar(&pk_r_star.x);
+    let pk_r_star_y_scalar = g3_base_to_scalar(&pk_r_star.y);
+
+    // Compute unblinded and blinded G3 points for the witness
+    // These will be passed to the Schnorr bridging proof to avoid recomputation
+    use ark_ec::CurveGroup;
+    let pk_star_g3 = G3::new(pk_star_x_scalar, pk_star_y_scalar);
+    let h_r_star = (h3_proj * r_star_g3).into_affine();
+    let pk_star_blinded = (pk_star_g3 + h_r_star).into_affine();
+
+    let pk_r_star_g3 = G3::new(pk_r_star_x_scalar, pk_r_star_y_scalar);
+    let h_r_r_star = (h3_proj * r_r_star_g3).into_affine();
+    let pk_r_star_blinded = (pk_r_star_g3 + h_r_r_star).into_affine();
 
     // Create coordinate commitments for pk_star and pk_r_star
     // pk_star_coord = G1^{pk_star_x} * G2^{pk_star_y}
@@ -1004,9 +1036,20 @@ fn generate_forward_proof(
         pk_r_star_y: pk_r_star_y_scalar,
         r_star,
         r_r_star,
+        pk_star_g3,
+        pk_star_blinded,
+        pk_r_star_g3,
+        pk_r_star_blinded,
     };
 
-    let pi_4_g1 = prove_schnorr_bridging(&schnorr_instance, &schnorr_witness)?;
+    let pi_4_g1 = prove_schnorr_bridging(
+        &schnorr_instance,
+        &schnorr_witness,
+        &precompute.pc_gens,
+        &precompute.bp_gens,
+        &precompute.h_g3,
+        &precompute.g3_tables,
+    )?;
 
     // Generate proof π_{4,G2}: Public key operations
     // Create G^theta commitment

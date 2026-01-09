@@ -106,3 +106,21 @@ pub fn scalar_to_g3_scalar(scalar: &ScalarField) -> G3ScalarField {
     // from_le_bytes_mod_order performs modular reduction automatically
     G3ScalarField::from_le_bytes_mod_order(&bytes)
 }
+
+/// Convert G3 base field element to BLS12-381 Fr (ScalarField)
+///
+/// Since G3's base field (ark_ed_on_bls12_381::Fq) is the same as BLS12-381 Fr,
+/// this conversion should be straightforward. We use the bigint representation
+/// for conversion.
+pub fn g3_base_to_scalar(base: &ark_ed_on_bls12_381::Fq) -> ScalarField {
+    use ark_ff::{BigInteger, PrimeField};
+    let bigint = base.into_bigint();
+
+    // Try direct conversion first
+    if let Some(result) = ScalarField::from_bigint(bigint) {
+        return result;
+    }
+
+    // If direct conversion fails, convert via bytes with modular reduction
+    ScalarField::from_le_bytes_mod_order(&bigint.to_bytes_le())
+}

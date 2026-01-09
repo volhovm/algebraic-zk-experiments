@@ -366,6 +366,10 @@ pub struct PublicParams {
     pub pk_merkle_membership: crate::proving::groth16::ProvingKey<PairingEngine>,
     /// Groth16 proving key for weight subtree proof (π_2)
     pub pk_weight_subtree: crate::proving::groth16::ProvingKey<PairingEngine>,
+    /// Bulletproof generators for Pedersen commitments
+    pub pc_gens: crate::proving::bulletproofs::PedersenGens<ark_bls12_381::G1Affine>,
+    /// Bulletproof generators for R1CS proofs
+    pub bp_gens: crate::proving::bulletproofs::BulletproofGens<ark_bls12_381::G1Affine>,
 }
 
 impl PublicParams {
@@ -383,12 +387,18 @@ impl PublicParams {
         max_out_degree: usize,
         rng: &mut R,
     ) -> ProtocolResult<Self> {
+        use crate::proving::bulletproofs::{BulletproofGens, PedersenGens};
         use crate::proving::circuits::{MerkleMembershipCircuit, WeightSubtreeCircuit};
         use crate::proving::groth16::Groth16;
+        use ark_bls12_381::G1Affine as G1A;
         use ark_crypto_primitives::snark::SNARK;
 
         // Generate cryptographic generators
         let generators = crate::crypto::generators::Generators::generate(rng, 10, 10, 10);
+
+        // Generate bulletproof generators
+        let pc_gens = PedersenGens::<G1A>::default();
+        let bp_gens = BulletproofGens::<G1A>::new(1024, 1);
 
         // Generate proving keys using circuit_specific_setup
         // For merkle membership circuit (π_1 and π_3, shared circuit and CRS)
@@ -413,6 +423,8 @@ impl PublicParams {
             generators,
             pk_merkle_membership,
             pk_weight_subtree,
+            pc_gens,
+            bp_gens,
         })
     }
 }
