@@ -914,7 +914,7 @@ fn generate_forward_proof(
     // These proofs connect the public key representations across different groups
 
     // Get G3 generators for creating pk_star and pk_r_star
-    use crate::crypto::curve::{scalar_to_grumpkin_scalar, G3Proj};
+    use crate::crypto::curve::{scalar_to_g3_scalar, G3Proj};
     use crate::crypto::prf::extract_routing_value;
 
     let g3_base = pp
@@ -934,17 +934,17 @@ fn generate_forward_proof(
     let r_star = ScalarField::rand(&mut rand::thread_rng());
     let r_r_star = ScalarField::rand(&mut rand::thread_rng());
 
-    // Convert scalar fields to Grumpkin scalar field for G3 operations
-    let sk_grumpkin = scalar_to_grumpkin_scalar(&_sk.sk);
-    let r_star_grumpkin = scalar_to_grumpkin_scalar(&r_star);
-    let r_r_star_grumpkin = scalar_to_grumpkin_scalar(&r_r_star);
+    // Convert scalar fields to G3 scalar field for G3 operations
+    let sk_g3 = scalar_to_g3_scalar(&_sk.sk);
+    let r_star_g3 = scalar_to_g3_scalar(&r_star);
+    let r_r_star_g3 = scalar_to_g3_scalar(&r_r_star);
 
     // Create pk_star = G^{sk} * H^{r_star}
-    let pk_star = (g3_proj * sk_grumpkin + h3_proj * r_star_grumpkin).into_affine();
+    let pk_star = (g3_proj * sk_g3 + h3_proj * r_star_g3).into_affine();
 
     // Create pk_r_star = pk_r * H^{r_r_star}
     let pk_r_proj = G3Proj::from(receiver.public_key.pk);
-    let pk_r_star = (pk_r_proj + h3_proj * r_r_star_grumpkin).into_affine();
+    let pk_r_star = (pk_r_proj + h3_proj * r_r_star_g3).into_affine();
 
     // Extract coordinates and convert to BLS12-381 scalar field
     let pk_star_x_scalar =

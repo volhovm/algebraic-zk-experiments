@@ -131,7 +131,7 @@ pub fn verify_batch(
                     .pk_star
                     .0
                     .xy()
-                    .unwrap_or((ark_grumpkin::Fq::from(0u64), ark_grumpkin::Fq::from(0u64)));
+                    .unwrap_or((ark_bls12_381::Fr::from(0u64), ark_bls12_381::Fr::from(0u64)));
                 crate::types::G1::generator().into_group()
             };
 
@@ -140,7 +140,7 @@ pub fn verify_batch(
                     .pk_r_star
                     .0
                     .xy()
-                    .unwrap_or((ark_grumpkin::Fq::from(0u64), ark_grumpkin::Fq::from(0u64)));
+                    .unwrap_or((ark_bls12_381::Fr::from(0u64), ark_bls12_381::Fr::from(0u64)));
                 crate::types::G1::generator().into_group()
             };
 
@@ -358,7 +358,7 @@ fn verify_hop_proof(
             .pk_star
             .0
             .xy()
-            .unwrap_or((ark_grumpkin::Fq::from(0u64), ark_grumpkin::Fq::from(0u64)));
+            .unwrap_or((ark_bls12_381::Fr::from(0u64), ark_bls12_381::Fr::from(0u64)));
         // Convert to G1 commitment: would need actual commitment computation
         crate::types::G1::generator().into_group()
     };
@@ -368,7 +368,7 @@ fn verify_hop_proof(
             .pk_r_star
             .0
             .xy()
-            .unwrap_or((ark_grumpkin::Fq::from(0u64), ark_grumpkin::Fq::from(0u64)));
+            .unwrap_or((ark_bls12_381::Fr::from(0u64), ark_bls12_381::Fr::from(0u64)));
         // Convert to G1 commitment: would need actual commitment computation
         crate::types::G1::generator().into_group()
     };

@@ -11,6 +11,7 @@ ark-bn254 = { git = "https://github.com/arkworks-rs/algebra.git", default-featur
 ark-bw6-761 = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false }
 ark-crypto-primitives = { git = "https://github.com/arkworks-rs/crypto-primitives.git", default-features = false, features = [ "snark", "sponge", "signature" ] }
 ark-ec = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false }
+ark-ed-on-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false }
 ark-ff = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false }
 ark-grumpkin = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false }
 ark-mnt4-298 = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false, features = [ "curve", "r1cs" ] }

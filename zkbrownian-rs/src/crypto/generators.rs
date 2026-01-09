@@ -6,7 +6,7 @@
 use crate::types::{G1Point, G2Point, G3};
 use ark_bls12_381::{G1Projective, G2Projective};
 use ark_ec::{CurveGroup, PrimeGroup};
-use ark_grumpkin::Projective as GrumpkinProjective;
+use ark_ed_on_bls12_381::SWProjective as G3Projective;
 use ark_std::rand::Rng;
 use ark_std::UniformRand;
 
@@ -24,10 +24,10 @@ pub fn generate_g2_generators<R: Rng>(rng: &mut R, count: usize) -> Vec<G2Point>
         .collect()
 }
 
-/// Generate N random generators in G3 (Grumpkin)
+/// Generate N random generators in G3 (G3)
 pub fn generate_g3_generators<R: Rng>(rng: &mut R, count: usize) -> Vec<G3> {
     (0..count)
-        .map(|_| GrumpkinProjective::rand(rng).into_affine())
+        .map(|_| G3Projective::rand(rng).into_affine())
         .collect()
 }
 
@@ -38,7 +38,7 @@ pub struct Generators {
     pub g1_base: G1Point,
     /// Base generator for G2 (standard curve generator)
     pub g2_base: G2Point,
-    /// Base generator for G3/Grumpkin (standard curve generator)
+    /// Base generator for G3/G3 (standard curve generator)
     pub g3_base: G3,
     /// Additional G1 generators: G_1, G_2, G_3, ...
     pub g1_generators: Vec<G1Point>,
@@ -61,7 +61,7 @@ impl Generators {
         Self {
             g1_base: G1Projective::generator().into_affine(),
             g2_base: G2Projective::generator().into_affine(),
-            g3_base: GrumpkinProjective::generator().into_affine(),
+            g3_base: G3Projective::generator().into_affine(),
             g1_generators: generate_g1_generators(rng, num_g1),
             g2_generators: generate_g2_generators(rng, num_g2),
             g3_generators: generate_g3_generators(rng, num_g3),
@@ -145,10 +145,7 @@ mod tests {
         // Check base generators
         assert_eq!(generators.g1_base, G1Projective::generator().into_affine());
         assert_eq!(generators.g2_base, G2Projective::generator().into_affine());
-        assert_eq!(
-            generators.g3_base,
-            GrumpkinProjective::generator().into_affine()
-        );
+        assert_eq!(generators.g3_base, G3Projective::generator().into_affine());
 
         // Check indexing
         assert_eq!(generators.g1(0).unwrap(), &generators.g1_base);

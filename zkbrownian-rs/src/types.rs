@@ -468,7 +468,7 @@ impl SubMerkleTree {
             let pk_point = neighbor_pk.pk;
             let (pk_x_base, pk_y_base) = pk_point.xy().unwrap_or_else(|| {
                 // Handle point at infinity (shouldn't happen with valid keys)
-                (ark_grumpkin::Fq::from(0u64), ark_grumpkin::Fq::from(0u64))
+                (ark_bls12_381::Fr::from(0u64), ark_bls12_381::Fr::from(0u64))
             });
 
             // Convert Grumpkin BaseField to BLS ScalarField via big integer representation
@@ -561,7 +561,7 @@ impl MerkleTree {
             let pk_point = pk.pk;
             let (pk_x_base, pk_y_base) = pk_point
                 .xy()
-                .unwrap_or_else(|| (ark_grumpkin::Fq::from(0u64), ark_grumpkin::Fq::from(0u64)));
+                .unwrap_or_else(|| (ark_bls12_381::Fr::from(0u64), ark_bls12_381::Fr::from(0u64)));
 
             // Convert Grumpkin BaseField to BLS ScalarField via big integer representation
             let pk_x = ScalarField::from_bigint(pk_x_base.into_bigint())

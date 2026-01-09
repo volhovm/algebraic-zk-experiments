@@ -1,14 +1,14 @@
-//! Curve type aliases for BLS12-381 and Grumpkin
+//! Curve type aliases for BLS12-381 and G3
 //!
 //! This module provides a centralized location for all curve-related type definitions:
 //! - G1: BLS12-381 G1 group (used for PRF outputs, commitments)
 //! - G2: BLS12-381 G2 group (kept for backward compatibility, not used for public keys)
 //! - GT: BLS12-381 target group (for pairings)
-//! - G3: Grumpkin curve (used for public keys)
+//! - G3: Embedded curve over BLS12-381 (used for public keys)
 
 use ark_bls12_381::{Bls12_381, Fq, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
 use ark_ec::pairing::Pairing;
-use ark_grumpkin::{Affine as GrumpkinAffine, Projective as GrumpkinProjective};
+use ark_ed_on_bls12_381::{SWAffine as JubJubAffine, SWProjective as JubJubProjective};
 
 // ============================================================================
 // BLS12-381 G1 Group
@@ -43,33 +43,33 @@ pub type G2Proj = G2Projective;
 pub type GT = <Bls12_381 as Pairing>::TargetField;
 
 // ============================================================================
-// Grumpkin Curve (G3)
+// G3 Curve (Embedded curve over BLS12-381)
 // ============================================================================
 
-/// G3 curve point in affine coordinates (Grumpkin)
+/// G3 curve point in affine coordinates
 /// Used for: Public keys, diversified public keys
-pub type G3 = GrumpkinAffine;
+/// G3 has BLS12-381 scalar field (Fr) as its base field
+pub type G3 = JubJubAffine;
 
-/// G3 curve point in projective coordinates (Grumpkin)
+/// G3 curve point in projective coordinates
 /// Used for: Efficient curve arithmetic
-pub type G3Proj = GrumpkinProjective;
+pub type G3Proj = JubJubProjective;
 
 // ============================================================================
 // Scalar Fields
 // ============================================================================
 
 /// Scalar field for BLS12-381 (Fr)
-/// Also serves as the base field for Grumpkin
+/// Also serves as the base field for G3
 /// Used for: Secret keys, diversifiers, general scalar arithmetic
 pub type ScalarField = Fr;
 
-/// Scalar field for Grumpkin (Fr)
-/// Note: Grumpkin's scalar field = BLS12-381's base field (Fq)
-/// Used for: Scalar multiplication on Grumpkin curve
-pub type GrumpkinScalarField = ark_grumpkin::Fr;
+/// Scalar field for G3 curve (Fr)
+/// Note: G3's scalar field is ark_ed_on_bls12_381::Fr
+/// Used for: Scalar multiplication on G3 curve
+pub type G3ScalarField = ark_ed_on_bls12_381::Fr;
 
 /// Base field for BLS12-381 (Fq)
-/// Also serves as the scalar field for Grumpkin
 pub type BaseField = Fq;
 
 // ============================================================================
@@ -83,27 +83,26 @@ pub type PairingEngine = Bls12_381;
 // Utility Functions
 // ============================================================================
 
-/// Convert BLS12-381 Fr to Grumpkin Fr (scalar field)
-/// This is needed because BLS12-381 Fr = Grumpkin base field,
-/// but we need Grumpkin's scalar field for curve operations
+/// Convert BLS12-381 Fr to G3 scalar field (Fr)
+/// This is needed for scalar multiplication on G3 curve
 ///
-/// Note: The two fields have different moduli, so we reduce modulo Grumpkin's field
-pub fn scalar_to_grumpkin_scalar(scalar: &ScalarField) -> GrumpkinScalarField {
+/// Note: Since BLS12-381 Fr is G3's base field, we need to convert
+/// to G3's scalar field for curve operations
+pub fn scalar_to_g3_scalar(scalar: &ScalarField) -> G3ScalarField {
     use ark_ff::{BigInteger, PrimeField};
     let bigint = scalar.into_bigint();
 
     // Try direct conversion first
-    if let Some(result) = GrumpkinScalarField::from_bigint(bigint) {
+    if let Some(result) = G3ScalarField::from_bigint(bigint) {
         return result;
     }
 
     // If direct conversion fails, convert via bytes with modular reduction
-    // This handles cases where BLS Fr > Grumpkin Fr
     let mut bytes = [0u8; 32];
     let bigint_bytes = bigint.to_bytes_le();
     let copy_len = std::cmp::min(bytes.len(), bigint_bytes.len());
     bytes[..copy_len].copy_from_slice(&bigint_bytes[..copy_len]);
 
     // from_le_bytes_mod_order performs modular reduction automatically
-    GrumpkinScalarField::from_le_bytes_mod_order(&bytes)
+    G3ScalarField::from_le_bytes_mod_order(&bytes)
 }
