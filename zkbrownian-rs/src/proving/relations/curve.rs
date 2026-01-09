@@ -283,7 +283,7 @@ mod tests {
         let x_l: VestaScalar = (p as PallasA).x;
         let y_l: VestaScalar = (p as PallasA).y;
 
-        let q = p; //<PallasA as UniformRand>::rand(&mut rng);
+        let q = <PallasA as UniformRand>::rand(&mut rng);
         let x_r: VestaScalar = (q as PallasA).x;
         let y_r: VestaScalar = (q as PallasA).y;
 
