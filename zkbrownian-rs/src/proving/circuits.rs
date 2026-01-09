@@ -424,11 +424,12 @@ pub fn prove_schnorr_bridging(
     let r_star_g3 = scalar_to_g3_scalar(&witness.r_star);
     let r_r_star_g3 = scalar_to_g3_scalar(&witness.r_r_star);
 
-    // Prove first rerandomize: pk_star_coord
-    let proof1 = {
-        let mut transcript = Transcript::new(b"SchnorrBridging-pkstar");
+    // Create a single proof with both rerandomize calls
+    let proof = {
+        let mut transcript = Transcript::new(b"SchnorrBridging");
         let mut prover = Prover::new(pc_gens, &mut transcript);
 
+        // First rerandomize: pk_star_coord
         let c_x_var = prover.allocate(Some(pk_star_g3.x)).unwrap();
         let c_y_var = prover.allocate(Some(pk_star_g3.y)).unwrap();
         let c_x_tilde_var = prover.allocate(Some(pk_star_blinded.x)).unwrap();
@@ -447,42 +448,32 @@ pub fn prove_schnorr_bridging(
             Some(r_star_g3),
         );
 
-        prover.prove(bp_gens).unwrap()
-    };
-
-    // Prove second rerandomize: pk_r_star_coord
-    let proof2 = {
-        let mut transcript = Transcript::new(b"SchnorrBridging-pkrstar");
-        let mut prover = Prover::new(pc_gens, &mut transcript);
-
-        let c_x_var = prover.allocate(Some(pk_r_star_g3.x)).unwrap();
-        let c_y_var = prover.allocate(Some(pk_r_star_g3.y)).unwrap();
-        let c_x_tilde_var = prover.allocate(Some(pk_r_star_blinded.x)).unwrap();
-        let c_y_tilde_var = prover.allocate(Some(pk_r_star_blinded.y)).unwrap();
+        // Second rerandomize: pk_r_star_coord
+        let c_r_x_var = prover.allocate(Some(pk_r_star_g3.x)).unwrap();
+        let c_r_y_var = prover.allocate(Some(pk_r_star_g3.y)).unwrap();
+        let c_r_x_tilde_var = prover.allocate(Some(pk_r_star_blinded.x)).unwrap();
+        let c_r_y_tilde_var = prover.allocate(Some(pk_r_star_blinded.y)).unwrap();
 
         re_randomize(
             &mut prover,
             g3_tables,
             PointRepresentation {
-                x: c_x_var.into(),
-                y: c_y_var.into(),
+                x: c_r_x_var.into(),
+                y: c_r_y_var.into(),
                 witness: Some(pk_r_star_g3),
             },
-            c_x_tilde_var.into(),
-            c_y_tilde_var.into(),
+            c_r_x_tilde_var.into(),
+            c_r_y_tilde_var.into(),
             Some(r_r_star_g3),
         );
 
         prover.prove(bp_gens).unwrap()
     };
 
-    // Serialize both proofs together
+    // Serialize the proof
     use ark_serialize::CanonicalSerialize;
     let mut proof_bytes = Vec::new();
-    proof1
-        .serialize_compressed(&mut proof_bytes)
-        .map_err(|e| ProtocolError::CryptoError(format!("Serialization failed: {:?}", e)))?;
-    proof2
+    proof
         .serialize_compressed(&mut proof_bytes)
         .map_err(|e| ProtocolError::CryptoError(format!("Serialization failed: {:?}", e)))?;
 
@@ -527,18 +518,17 @@ pub fn verify_schnorr_bridging(
     let h_g3 = G3::rand(&mut rng);
     let tables = build_tables(h_g3);
 
-    // Deserialize the two proofs from the proof data
+    // Deserialize the single proof from the proof data
     let mut cursor = &proof.data[..];
-    let proof1 = R1CSProof::deserialize_compressed(&mut cursor)
-        .map_err(|e| ProtocolError::CryptoError(format!("Deserialization failed: {:?}", e)))?;
-    let proof2 = R1CSProof::deserialize_compressed(&mut cursor)
+    let r1cs_proof = R1CSProof::deserialize_compressed(&mut cursor)
         .map_err(|e| ProtocolError::CryptoError(format!("Deserialization failed: {:?}", e)))?;
 
-    // Verify first rerandomize: pk_star_coord
+    // Verify both rerandomize calls in a single proof
     {
-        let mut transcript = Transcript::new(b"SchnorrBridging-pkstar");
+        let mut transcript = Transcript::new(b"SchnorrBridging");
         let mut verifier: Verifier<_, G1A> = Verifier::new(&mut transcript);
 
+        // First rerandomize: pk_star_coord
         let c_x_var = verifier.allocate(None).unwrap();
         let c_y_var = verifier.allocate(None).unwrap();
         let c_x_tilde_var = verifier.allocate(None).unwrap();
@@ -557,37 +547,28 @@ pub fn verify_schnorr_bridging(
             None,
         );
 
-        verifier.verify(&proof1, pc_gens, bp_gens).map_err(|e| {
-            ProtocolError::CryptoError(format!("Verification failed for pk_star: {:?}", e))
-        })?;
-    }
-
-    // Verify second rerandomize: pk_r_star_coord
-    {
-        let mut transcript = Transcript::new(b"SchnorrBridging-pkrstar");
-        let mut verifier: Verifier<_, G1A> = Verifier::new(&mut transcript);
-
-        let c_x_var = verifier.allocate(None).unwrap();
-        let c_y_var = verifier.allocate(None).unwrap();
-        let c_x_tilde_var = verifier.allocate(None).unwrap();
-        let c_y_tilde_var = verifier.allocate(None).unwrap();
+        // Second rerandomize: pk_r_star_coord
+        let c_r_x_var = verifier.allocate(None).unwrap();
+        let c_r_y_var = verifier.allocate(None).unwrap();
+        let c_r_x_tilde_var = verifier.allocate(None).unwrap();
+        let c_r_y_tilde_var = verifier.allocate(None).unwrap();
 
         re_randomize::<_, _, JubjubConfig, _>(
             &mut verifier,
             &tables,
             PointRepresentation {
-                x: c_x_var.into(),
-                y: c_y_var.into(),
+                x: c_r_x_var.into(),
+                y: c_r_y_var.into(),
                 witness: None,
             },
-            c_x_tilde_var.into(),
-            c_y_tilde_var.into(),
+            c_r_x_tilde_var.into(),
+            c_r_y_tilde_var.into(),
             None,
         );
 
-        verifier.verify(&proof2, pc_gens, bp_gens).map_err(|e| {
-            ProtocolError::CryptoError(format!("Verification failed for pk_r_star: {:?}", e))
-        })?;
+        verifier
+            .verify(&r1cs_proof, pc_gens, bp_gens)
+            .map_err(|e| ProtocolError::CryptoError(format!("Verification failed: {:?}", e)))?;
     }
 
     Ok(true)

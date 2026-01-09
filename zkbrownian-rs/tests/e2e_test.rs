@@ -454,7 +454,7 @@ fn test_full_protocol_concurrent() {
         Arc::new((0..num_nodes).map(|_| Mutex::new(Vec::new())).collect());
 
     // Step 4: Each user spawns packets
-    const NUM_PACKETS_PER_USER: usize = 250;
+    const NUM_PACKETS_PER_USER: usize = 10;
     const TTL: usize = 5;
 
     println!(

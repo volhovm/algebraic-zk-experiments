@@ -397,8 +397,9 @@ impl PublicParams {
         let generators = crate::crypto::generators::Generators::generate(rng, 10, 10, 10);
 
         // Generate bulletproof generators
+        // Increased size to 4096 to accommodate combined re_randomize proofs (2x ~1795 constraints)
         let pc_gens = PedersenGens::<G1A>::default();
-        let bp_gens = BulletproofGens::<G1A>::new(1024, 1);
+        let bp_gens = BulletproofGens::<G1A>::new(4096, 1);
 
         // Generate proving keys using circuit_specific_setup
         // For merkle membership circuit (π_1 and π_3, shared circuit and CRS)
