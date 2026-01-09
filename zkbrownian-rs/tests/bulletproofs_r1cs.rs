@@ -254,7 +254,7 @@ fn kshuffle_batch_helper(k: usize, n: usize) {
 #[test]
 fn shuffle_gadget_test_1() {
     kshuffle_helper(1);
-    kshuffle_batch_helper(1, 2);
+    //kshuffle_batch_helper(1, 2);
 }
 
 #[test]

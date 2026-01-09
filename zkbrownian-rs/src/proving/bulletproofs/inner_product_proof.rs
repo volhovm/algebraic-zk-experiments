@@ -457,7 +457,9 @@ pub fn inner_product<S: Field>(a: &[S], b: &[S]) -> S {
 mod tests {
     use super::*;
 
-    use ark_pallas::Affine;
+    //use ark_pallas::Affine;
+    use ark_bls12_381::G1Affine as Affine;
+    //use ark_bn254::G1Affine as Affine;
     use ark_std::UniformRand;
 
     type F = <Affine as AffineRepr>::ScalarField;
@@ -479,6 +481,10 @@ mod tests {
 
         // Q would be determined upstream in the protocol, so we pick a random one.
         let Q = util::affine_from_bytes_tai::<Affine>(b"test point");
+
+        assert!(Q.is_on_curve());
+        assert!(Q.is_in_correct_subgroup_assuming_on_curve());
+
 
         // a and b are the vectors for which we want to prove c = <a,b>
         let a: Vec<_> = (0..n).map(|_| F::rand(&mut rng)).collect();

@@ -297,7 +297,8 @@ impl<'a, C: AffineRepr> BulletproofGensShare<'a, C> {
 mod tests {
     use super::*;
 
-    use ark_pallas::*;
+    //use ark_pallas::*;
+    use ark_bls12_381::G1Affine as Affine;
 
     #[test]
     fn aggregated_gens_iter_matches_flat_map() {

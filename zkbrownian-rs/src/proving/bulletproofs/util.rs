@@ -338,7 +338,8 @@ pub fn affine_from_bytes_tai<C: AffineRepr>(bytes: &[u8]) -> C {
         let result = sha.finalize();
         let res = C::from_random_bytes(result.as_slice());
         if let Some(point) = res {
-            return point;
+            let cleared = point.clear_cofactor();
+            return cleared;
         }
     }
     panic!()

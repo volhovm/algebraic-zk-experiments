@@ -111,6 +111,7 @@ impl TranscriptProtocol for Transcript {
             let res = <C::ScalarField as Field>::from_random_bytes(result.as_slice());
 
             if let Some(scalar) = res {
+                println!("challenge scalar is {:?}", scalar);
                 return scalar;
             }
         }
