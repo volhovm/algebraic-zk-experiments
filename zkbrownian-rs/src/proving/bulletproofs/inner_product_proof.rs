@@ -48,6 +48,8 @@ impl<C: AffineRepr> InnerProductProof<C> {
         mut a_vec: Vec<C::ScalarField>,
         mut b_vec: Vec<C::ScalarField>,
     ) -> InnerProductProof<C> {
+        let ipp_create_start = std::time::Instant::now();
+
         // Create slices G, H, a, b backed by their respective
         // vectors.  This lets us reslice as we compress the lengths
         // of the vectors in the main loop below.
@@ -57,6 +59,7 @@ impl<C: AffineRepr> InnerProductProof<C> {
         let mut b = &mut b_vec[..];
 
         let mut n = G.len();
+        println!("[TIMING IPP] Initial vector size n: {}", n);
 
         // All of the input vectors must have the same length.
         assert_eq!(G.len(), n);
@@ -78,14 +81,20 @@ impl<C: AffineRepr> InnerProductProof<C> {
         // If it's the first iteration, unroll the Hprime = H*y_inv scalar mults
         // into multiscalar muls, for performance.
         if n != 1 {
+            let first_iter_start = std::time::Instant::now();
             n /= 2;
             let (a_L, a_R) = a.split_at_mut(n);
             let (b_L, b_R) = b.split_at_mut(n);
             let (G_L, G_R) = G.split_at_mut(n);
             let (H_L, H_R) = H.split_at_mut(n);
 
+            let inner_prod_start = std::time::Instant::now();
             let c_L = inner_product(a_L, b_R);
             let c_R = inner_product(a_R, b_L);
+            println!(
+                "[TIMING IPP] First iter inner products: {:?}",
+                inner_prod_start.elapsed()
+            );
 
             let l_scalars: Vec<C::ScalarField> = a_L
                 .iter()
@@ -104,6 +113,7 @@ impl<C: AffineRepr> InnerProductProof<C> {
                 .chain(iter::once(Q))
                 .copied()
                 .collect();
+            let msm_start = std::time::Instant::now();
             let L = C::Group::msm_unchecked(l_points.as_slice(), l_scalars.as_slice()).into();
 
             let r_scalars: Vec<C::ScalarField> = a_R
@@ -124,6 +134,10 @@ impl<C: AffineRepr> InnerProductProof<C> {
                 .copied()
                 .collect();
             let R = C::Group::msm_unchecked(r_points.as_slice(), r_scalars.as_slice()).into();
+            println!(
+                "[TIMING IPP] First iter MSM (L and R): {:?}",
+                msm_start.elapsed()
+            );
 
             L_vec.push(L);
             R_vec.push(R);
@@ -138,6 +152,7 @@ impl<C: AffineRepr> InnerProductProof<C> {
                 panic!("u challenge is zero");
             };
 
+            let fold_start = std::time::Instant::now();
             for i in 0..n {
                 a_L[i] = a_L[i] * u + u_inv * a_R[i];
                 b_L[i] = b_L[i] * u_inv + u * b_R[i];
@@ -152,23 +167,41 @@ impl<C: AffineRepr> InnerProductProof<C> {
                 )
                 .into();
             }
+            println!(
+                "[TIMING IPP] First iter folding loop: {:?}",
+                fold_start.elapsed()
+            );
 
             a = a_L;
             b = b_L;
             G = G_L;
             H = H_L;
+            println!(
+                "[TIMING IPP] First iteration total: {:?}",
+                first_iter_start.elapsed()
+            );
         }
 
+        let mut iteration = 1;
         while n != 1 {
+            let iter_start = std::time::Instant::now();
             n /= 2;
             let (a_L, a_R) = a.split_at_mut(n);
             let (b_L, b_R) = b.split_at_mut(n);
             let (G_L, G_R) = G.split_at_mut(n);
             let (H_L, H_R) = H.split_at_mut(n);
 
+            let inner_prod_start = std::time::Instant::now();
             let c_L = inner_product(a_L, b_R);
             let c_R = inner_product(a_R, b_L);
+            println!(
+                "[TIMING IPP] Iter {} inner products (n={}): {:?}",
+                iteration,
+                n,
+                inner_prod_start.elapsed()
+            );
 
+            let msm_start = std::time::Instant::now();
             let L = C::Group::msm_unchecked(
                 G_R.iter()
                     .chain(H_L.iter())
@@ -200,6 +233,11 @@ impl<C: AffineRepr> InnerProductProof<C> {
                     .as_slice(),
             )
             .into();
+            println!(
+                "[TIMING IPP] Iter {} MSM (L and R): {:?}",
+                iteration,
+                msm_start.elapsed()
+            );
 
             L_vec.push(L);
             R_vec.push(R);
@@ -214,20 +252,36 @@ impl<C: AffineRepr> InnerProductProof<C> {
                 panic!("u challenge is zero");
             };
 
+            let fold_start = std::time::Instant::now();
             for i in 0..n {
                 a_L[i] = a_L[i] * u + u_inv * a_R[i];
                 b_L[i] = b_L[i] * u_inv + u * b_R[i];
                 G_L[i] = C::Group::msm_unchecked(&[G_L[i], G_R[i]], &[u_inv, u]).into();
                 H_L[i] = C::Group::msm_unchecked(&[H_L[i], H_R[i]], &[u, u_inv]).into();
             }
+            println!(
+                "[TIMING IPP] Iter {} folding loop: {:?}",
+                iteration,
+                fold_start.elapsed()
+            );
 
             a = a_L;
             b = b_L;
             G = G_L;
             H = H_L;
+            println!(
+                "[TIMING IPP] Iter {} total: {:?}",
+                iteration,
+                iter_start.elapsed()
+            );
+            iteration += 1;
             // todo collapse iteration one and rest?
         }
 
+        println!(
+            "[TIMING IPP] Total IPP create: {:?}",
+            ipp_create_start.elapsed()
+        );
         InnerProductProof {
             L_vec,
             R_vec,

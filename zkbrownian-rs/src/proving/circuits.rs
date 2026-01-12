@@ -413,8 +413,11 @@ pub fn prove_schnorr_bridging(
     // The idea is to prove that the coordinate commitments (in G1 of BLS12-381)
     // correctly encode the coordinates of points on the G3 curve.
 
+    let schnorr_start = std::time::Instant::now();
+
     // Use precomputed G3 points and tables from witness and precompute
     // All these values are computed in forward.rs and passed here to avoid duplication
+    let setup_start = std::time::Instant::now();
     let pk_star_g3 = witness.pk_star_g3;
     let pk_star_blinded = witness.pk_star_blinded;
     let pk_r_star_g3 = witness.pk_r_star_g3;
@@ -423,18 +426,29 @@ pub fn prove_schnorr_bridging(
     // Convert randomness to G3 scalar field for the rerandomize gadget
     let r_star_g3 = scalar_to_g3_scalar(&witness.r_star);
     let r_r_star_g3 = scalar_to_g3_scalar(&witness.r_r_star);
+    println!(
+        "[TIMING]     Setup witness data: {:?}",
+        setup_start.elapsed()
+    );
 
     // Create a single proof with both rerandomize calls
+    let prove_start = std::time::Instant::now();
     let proof = {
         let mut transcript = Transcript::new(b"SchnorrBridging");
         let mut prover = Prover::new(pc_gens, &mut transcript);
 
         // First rerandomize: pk_star_coord
+        let alloc1_start = std::time::Instant::now();
         let c_x_var = prover.allocate(Some(pk_star_g3.x)).unwrap();
         let c_y_var = prover.allocate(Some(pk_star_g3.y)).unwrap();
         let c_x_tilde_var = prover.allocate(Some(pk_star_blinded.x)).unwrap();
         let c_y_tilde_var = prover.allocate(Some(pk_star_blinded.y)).unwrap();
+        println!(
+            "[TIMING]     Allocate variables 1: {:?}",
+            alloc1_start.elapsed()
+        );
 
+        let rerand1_start = std::time::Instant::now();
         re_randomize(
             &mut prover,
             g3_tables,
@@ -447,13 +461,20 @@ pub fn prove_schnorr_bridging(
             c_y_tilde_var.into(),
             Some(r_star_g3),
         );
+        println!("[TIMING]     Re-randomize 1: {:?}", rerand1_start.elapsed());
 
         // Second rerandomize: pk_r_star_coord
+        let alloc2_start = std::time::Instant::now();
         let c_r_x_var = prover.allocate(Some(pk_r_star_g3.x)).unwrap();
         let c_r_y_var = prover.allocate(Some(pk_r_star_g3.y)).unwrap();
         let c_r_x_tilde_var = prover.allocate(Some(pk_r_star_blinded.x)).unwrap();
         let c_r_y_tilde_var = prover.allocate(Some(pk_r_star_blinded.y)).unwrap();
+        println!(
+            "[TIMING]     Allocate variables 2: {:?}",
+            alloc2_start.elapsed()
+        );
 
+        let rerand2_start = std::time::Instant::now();
         re_randomize(
             &mut prover,
             g3_tables,
@@ -466,17 +487,72 @@ pub fn prove_schnorr_bridging(
             c_r_y_tilde_var.into(),
             Some(r_r_star_g3),
         );
+        println!("[TIMING]     Re-randomize 2: {:?}", rerand2_start.elapsed());
 
-        prover.prove(bp_gens).unwrap()
+        // Debug: print prover state before proving
+        println!("[DEBUG] Prover state before prove():");
+        println!(
+            "[DEBUG]   Number of constraints: {}",
+            prover.constraints.len()
+        );
+        println!(
+            "[DEBUG]   Number of multipliers (a_L): {}",
+            prover.secrets.a_L.len()
+        );
+        println!(
+            "[DEBUG]   Number of multipliers (a_R): {}",
+            prover.secrets.a_R.len()
+        );
+        println!(
+            "[DEBUG]   Number of multipliers (a_O): {}",
+            prover.secrets.a_O.len()
+        );
+        println!(
+            "[DEBUG]   Number of witness values (v): {}",
+            prover.secrets.v.len()
+        );
+        println!(
+            "[DEBUG]   Number of witness blindings (v_blinding): {}",
+            prover.secrets.v_blinding.len()
+        );
+        println!(
+            "[DEBUG]   Number of deferred constraints: {}",
+            prover.deferred_constraints.len()
+        );
+        println!(
+            "[DEBUG]   Pending multiplier: {:?}",
+            prover.pending_multiplier
+        );
+
+        let final_prove_start = std::time::Instant::now();
+        let proof = prover.prove(bp_gens).unwrap();
+        println!(
+            "[TIMING]     Final prove: {:?}",
+            final_prove_start.elapsed()
+        );
+        proof
     };
+    println!(
+        "[TIMING]     Total proof generation: {:?}",
+        prove_start.elapsed()
+    );
 
     // Serialize the proof
+    let serialize_start = std::time::Instant::now();
     use ark_serialize::CanonicalSerialize;
     let mut proof_bytes = Vec::new();
     proof
         .serialize_compressed(&mut proof_bytes)
         .map_err(|e| ProtocolError::CryptoError(format!("Serialization failed: {:?}", e)))?;
+    println!(
+        "[TIMING]     Serialize proof: {:?}",
+        serialize_start.elapsed()
+    );
 
+    println!(
+        "[TIMING]   Total prove_schnorr_bridging: {:?}",
+        schnorr_start.elapsed()
+    );
     Ok(Schnorr {
         data: proof_bytes,
         _phantom: std::marker::PhantomData,
@@ -495,10 +571,10 @@ pub fn prove_schnorr_bridging(
 /// # Returns
 /// true if proof is valid, false otherwise
 pub fn verify_schnorr_bridging(
-    proof: &Schnorr<G1>,
+    _proof: &Schnorr<G1>,
     _instance: &SchnorrBridgingInstance,
-    pc_gens: &PedersenGens<G1A>,
-    bp_gens: &BulletproofGens<G1A>,
+    _pc_gens: &PedersenGens<G1A>,
+    _bp_gens: &BulletproofGens<G1A>,
 ) -> ProtocolResult<bool> {
     Ok(true)
     //use crate::proving::bulletproofs::r1cs::*;

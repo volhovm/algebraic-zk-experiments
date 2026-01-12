@@ -31,21 +31,21 @@ use super::op_splits;
 /// which consumes the `Prover` instance, samples random challenges
 /// that instantiate the randomized constraints, and creates a complete proof.
 pub struct Prover<'g, T: BorrowMut<Transcript>, C: AffineRepr> {
-    transcript: T,
-    pc_gens: &'g PedersenGens<C>,
+    pub transcript: T,
+    pub pc_gens: &'g PedersenGens<C>,
     /// The constraints accumulated so far.
-    constraints: Vec<LinearCombination<C::ScalarField>>,
+    pub constraints: Vec<LinearCombination<C::ScalarField>>,
     /// Secret data
-    secrets: Secrets<C::ScalarField>,
+    pub secrets: Secrets<C::ScalarField>,
 
     /// This list holds closures that will be called in the second phase of the protocol,
     /// when non-randomized variables are committed.
     #[allow(clippy::type_complexity)]
-    deferred_constraints:
+    pub deferred_constraints:
         Vec<Box<dyn FnOnce(&mut RandomizingProver<'g, T, C>) -> Result<(), R1CSError>>>,
 
     /// Index of a pending multiplier that's not fully assigned yet.
-    pending_multiplier: Option<usize>,
+    pub pending_multiplier: Option<usize>,
 }
 
 // todo I assume this would be automatically implemented by the compiler if it did not have a a mutable borrow of a transcript
@@ -54,19 +54,19 @@ unsafe impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Send for Prover<'g, T, 
 /// Separate struct to implement Drop trait for (for zeroing),
 /// so that compiler does not prohibit us from moving the Transcript out of `prove()`.
 #[derive(ZeroizeOnDrop)]
-struct Secrets<F: Field> {
+pub struct Secrets<F: Field> {
     /// Stores assignments to the "left" of multiplication gates
-    a_L: Vec<F>,
+    pub a_L: Vec<F>,
     /// Stores assignments to the "right" of multiplication gates
-    a_R: Vec<F>,
+    pub a_R: Vec<F>,
     /// Stores assignments to the "output" of multiplication gates
-    a_O: Vec<F>,
+    pub a_O: Vec<F>,
     /// High-level witness data (value openings to V commitments)
-    v: Vec<F>,
+    pub v: Vec<F>,
     /// High-level witness data (blinding openings to V commitments)
-    v_blinding: Vec<F>,
+    pub v_blinding: Vec<F>,
     /// Vector openings
-    vec_open: Vec<(F, Vec<F>)>,
+    pub vec_open: Vec<(F, Vec<F>)>,
 }
 
 /// Prover in the randomizing phase.
@@ -505,10 +505,14 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
         mut self,
         bp_gens: &BulletproofGens<C>,
     ) -> Result<(R1CSProof<C>, T), R1CSError> {
+        let prove_start = std::time::Instant::now();
+
         // pad
+        let pad_start = std::time::Instant::now();
         while self.size() > self.secrets.a_L.len() {
             self.allocate_multiplier(Some((C::ScalarField::zero(), C::ScalarField::zero())))?;
         }
+        println!("[TIMING BP] Padding: {:?}", pad_start.elapsed());
 
         use crate::proving::bulletproofs::util;
         use std::iter;
@@ -573,6 +577,7 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
         // We are performing a single-party circuit proof, so party index is 0.
         let gens = bp_gens.share(0);
 
+        let rand_start = std::time::Instant::now();
         let mut rng = rand::thread_rng();
         let i_blinding1 = C::ScalarField::rand(&mut rng);
         let o_blinding1 = C::ScalarField::rand(&mut rng);
@@ -582,9 +587,14 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
             Zeroizing::new((0..n1).map(|_| C::ScalarField::rand(&mut rng)).collect());
         let s_R1: Zeroizing<Vec<C::ScalarField>> =
             Zeroizing::new((0..n1).map(|_| C::ScalarField::rand(&mut rng)).collect());
+        println!(
+            "[TIMING BP] Generate random blindings: {:?}",
+            rand_start.elapsed()
+        );
 
         #[cfg(feature = "parallel")]
         let (A_I1, A_O1, S1) = {
+            let msm_start = std::time::Instant::now();
             // todo clean up when send is safely implemented
             let blinding = self.pc_gens.B_blinding;
             let A_I1_scalars = iter::once(&i_blinding1)
@@ -653,7 +663,12 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
                 });
             });
 
-            (A_I1.unwrap(), A_O1.unwrap(), S1.unwrap())
+            let result = (A_I1.unwrap(), A_O1.unwrap(), S1.unwrap());
+            println!(
+                "[TIMING BP] Phase 1 MSM (parallel, 3 spawns): {:?}",
+                msm_start.elapsed()
+            );
+            result
         };
         #[cfg(not(feature = "parallel"))]
         let (A_I1, A_O1, S1) = {
@@ -711,13 +726,23 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
             (A_I1, A_O1, S1)
         };
 
+        let transcript_start = std::time::Instant::now();
         let transcript = self.transcript.borrow_mut();
         transcript.append_point(b"A_I1", &A_I1);
         transcript.append_point(b"A_O1", &A_O1);
         transcript.append_point(b"S1", &S1);
+        println!(
+            "[TIMING BP] Append phase 1 to transcript: {:?}",
+            transcript_start.elapsed()
+        );
 
         // Process the remaining constraints.
+        let rand_constraints_start = std::time::Instant::now();
         self = self.create_randomized_constraints()?;
+        println!(
+            "[TIMING BP] Create randomized constraints: {:?}",
+            rand_constraints_start.elapsed()
+        );
 
         // Pad zeros to the next power of two (or do that implicitly when creating vectors)
 
@@ -814,22 +839,37 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
             (C::zero(), C::zero(), C::zero())
         };
 
+        let transcript_start2 = std::time::Instant::now();
         let transcript = self.transcript.borrow_mut();
         transcript.append_point(b"A_I2", &A_I2);
         transcript.append_point(b"A_O2", &A_O2);
         transcript.append_point(b"S2", &S2);
+        println!(
+            "[TIMING BP] Append phase 2 to transcript: {:?}",
+            transcript_start2.elapsed()
+        );
 
         // 4. Compute blinded vector polynomials l(x) and r(x)
 
+        let challenge_start = std::time::Instant::now();
         let y = transcript.challenge_scalar::<C>(b"y");
         let z = transcript.challenge_scalar::<C>(b"z");
+        println!(
+            "[TIMING BP] Generate challenges y, z: {:?}",
+            challenge_start.elapsed()
+        );
 
         // println!("P A_I2 {}", &A_I2);
         // println!("P A_O2 {}", &A_O2);
         // println!("P S2 {}", &S2);
         // println!("P z {}", z);
 
+        let flatten_start = std::time::Instant::now();
         let (wL, wR, wO, wV, wVCs) = self.flattened_constraints(&z);
+        println!(
+            "[TIMING BP] Flatten constraints: {:?}",
+            flatten_start.elapsed()
+        );
 
         #[cfg(debug_assertions)]
         {
@@ -840,6 +880,7 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
             println!("prover wO = {:?}", &wO);
         }
 
+        let poly_setup_start = std::time::Instant::now();
         let mut l_poly = util::VecPoly::<C::ScalarField>::zero(n, op_degree + 1);
         let mut r_poly = util::VecPoly::<C::ScalarField>::zero(n, op_degree + 1);
 
@@ -847,6 +888,10 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
 
         let exp_y_inv = util::exp_iter(y_inv).take(padded_n).collect::<Vec<_>>();
         let exp_y = util::exp_iter(y).take(padded_n).collect::<Vec<_>>();
+        println!(
+            "[TIMING BP] Setup l_poly and r_poly: {:?}",
+            poly_setup_start.elapsed()
+        );
 
         //
         let sLsR = s_L1
@@ -866,6 +911,7 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
         // etc.
         // op_degree = 2 + 2 * floor(#comm / 2)
 
+        let poly_populate_start = std::time::Instant::now();
         for (i, (sl, sr)) in sLsR.enumerate() {
             debug_assert!(i < self.secrets.a_L.len());
 
@@ -993,11 +1039,21 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
                 r_poly.coeff_mut(r_deg)[i] = wVCs[j][i];
             }
         }
+        println!(
+            "[TIMING BP] Populate l_poly and r_poly: {:?}",
+            poly_populate_start.elapsed()
+        );
 
+        let inner_product_start = std::time::Instant::now();
         let mut t_poly = util::VecPoly::inner_product(&l_poly, &r_poly);
+        println!(
+            "[TIMING BP] Compute inner product (t_poly): {:?}",
+            inner_product_start.elapsed()
+        );
         assert_eq!(t_poly.deg(), 2 * (op_degree + 1));
 
         // commit to t-poly
+        let t_commit_start = std::time::Instant::now();
         let mut t_blinding_poly = util::Poly::zero(t_poly.deg());
         for d in 0..t_poly.deg() + 1 {
             if d == op_degree {
@@ -1018,6 +1074,10 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
                 .pc_gens
                 .commit(t_poly.coeff()[d], t_blinding_poly.coeff()[d]);
         }
+        println!(
+            "[TIMING BP] Commit to t-poly: {:?}",
+            t_commit_start.elapsed()
+        );
 
         // commit to T
         let transcript = self.transcript.borrow_mut();
@@ -1155,8 +1215,11 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
 
         // Get a challenge value to combine statements for the IPP
         let w = transcript.challenge_scalar::<C>(b"w");
+        let compute_q_start = std::time::Instant::now();
         let Q = self.pc_gens.B.mul(w).into();
+        println!("[TIMING BP] Compute Q: {:?}", compute_q_start.elapsed());
 
+        let factors_start = std::time::Instant::now();
         let G_factors = std::iter::repeat_n(C::ScalarField::one(), n1)
             .chain(std::iter::repeat_n(u, n2 + pad))
             .collect::<Vec<_>>();
@@ -1166,10 +1229,15 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
             .zip(G_factors.iter())
             .map(|(y_inv, u_or_1)| y_inv * u_or_1)
             .collect::<Vec<_>>();
+        println!(
+            "[TIMING BP] Compute G_factors and H_factors: {:?}",
+            factors_start.elapsed()
+        );
 
         // TODO: check if missing \circ y^{-1} on the vec. comm part:
         // everything in H_generators (r_vec) is mult. by y!
 
+        let ipp_start = std::time::Instant::now();
         let ipp_proof = InnerProductProof::create(
             transcript,
             &Q,
@@ -1179,6 +1247,10 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
             gens.H(padded_n).copied().collect(),
             l_vec,
             r_vec,
+        );
+        println!(
+            "[TIMING BP] Inner product proof (IPP): {:?}",
+            ipp_start.elapsed()
         );
 
         let proof = R1CSProof {
@@ -1194,6 +1266,10 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
             e_blinding,
             ipp_proof,
         };
+        println!(
+            "[TIMING BP] Total prove_and_return_transcript: {:?}",
+            prove_start.elapsed()
+        );
         Ok((proof, self.transcript))
     }
 }
