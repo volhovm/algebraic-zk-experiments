@@ -153,19 +153,58 @@ impl<C: AffineRepr> InnerProductProof<C> {
             };
 
             let fold_start = std::time::Instant::now();
-            for i in 0..n {
-                a_L[i] = a_L[i] * u + u_inv * a_R[i];
-                b_L[i] = b_L[i] * u_inv + u * b_R[i];
-                G_L[i] = C::Group::msm_unchecked(
-                    &[G_L[i], G_R[i]],
-                    &[(u_inv * G_factors[i]), (u * G_factors[n + i])],
-                )
-                .into();
-                H_L[i] = C::Group::msm_unchecked(
-                    &[H_L[i], H_R[i]],
-                    &[(u * H_factors[i]), (u_inv * H_factors[n + i])],
-                )
-                .into();
+            #[cfg(feature = "parallel")]
+            {
+                use rayon::prelude::*;
+                // Parallel scalar field operations
+                a_L.par_iter_mut()
+                    .zip(a_R.par_iter())
+                    .for_each(|(a_l, a_r)| {
+                        *a_l = *a_l * u + u_inv * *a_r;
+                    });
+                b_L.par_iter_mut()
+                    .zip(b_R.par_iter())
+                    .for_each(|(b_l, b_r)| {
+                        *b_l = *b_l * u_inv + u * *b_r;
+                    });
+                // Parallel group operations
+                G_L.par_iter_mut()
+                    .zip(G_R.par_iter())
+                    .zip(
+                        G_factors[0..n]
+                            .par_iter()
+                            .zip(G_factors[n..2 * n].par_iter()),
+                    )
+                    .for_each(|((g_l, g_r), (g_fac_l, g_fac_r))| {
+                        *g_l = (g_l.into_group() * (u_inv * g_fac_l)
+                            + g_r.into_group() * (u * g_fac_r))
+                            .into();
+                    });
+                H_L.par_iter_mut()
+                    .zip(H_R.par_iter())
+                    .zip(
+                        H_factors[0..n]
+                            .par_iter()
+                            .zip(H_factors[n..2 * n].par_iter()),
+                    )
+                    .for_each(|((h_l, h_r), (h_fac_l, h_fac_r))| {
+                        *h_l = (h_l.into_group() * (u * h_fac_l)
+                            + h_r.into_group() * (u_inv * h_fac_r))
+                            .into();
+                    });
+            }
+            #[cfg(not(feature = "parallel"))]
+            {
+                for i in 0..n {
+                    a_L[i] = a_L[i] * u + u_inv * a_R[i];
+                    b_L[i] = b_L[i] * u_inv + u * b_R[i];
+                    G_L[i] = (G_L[i].into_group() * (u_inv * G_factors[i])
+                        + G_R[i].into_group() * (u * G_factors[n + i]))
+                        .into();
+                    H_L[i] = (H_L[i].into_group() * (u * H_factors[i])
+                        + H_R[i].into_group() * (u_inv * H_factors[n + i]))
+                        .into();
+                }
             }
             println!(
                 "[TIMING IPP] First iter folding loop: {:?}",
@@ -253,11 +292,40 @@ impl<C: AffineRepr> InnerProductProof<C> {
             };
 
             let fold_start = std::time::Instant::now();
-            for i in 0..n {
-                a_L[i] = a_L[i] * u + u_inv * a_R[i];
-                b_L[i] = b_L[i] * u_inv + u * b_R[i];
-                G_L[i] = C::Group::msm_unchecked(&[G_L[i], G_R[i]], &[u_inv, u]).into();
-                H_L[i] = C::Group::msm_unchecked(&[H_L[i], H_R[i]], &[u, u_inv]).into();
+            #[cfg(feature = "parallel")]
+            {
+                use rayon::prelude::*;
+                // Parallel scalar field operations
+                a_L.par_iter_mut()
+                    .zip(a_R.par_iter())
+                    .for_each(|(a_l, a_r)| {
+                        *a_l = *a_l * u + u_inv * *a_r;
+                    });
+                b_L.par_iter_mut()
+                    .zip(b_R.par_iter())
+                    .for_each(|(b_l, b_r)| {
+                        *b_l = *b_l * u_inv + u * *b_r;
+                    });
+                // Parallel group operations (direct scalar multiplication instead of 2-element MSM)
+                G_L.par_iter_mut()
+                    .zip(G_R.par_iter())
+                    .for_each(|(g_l, g_r)| {
+                        *g_l = (g_l.into_group() * u_inv + g_r.into_group() * u).into();
+                    });
+                H_L.par_iter_mut()
+                    .zip(H_R.par_iter())
+                    .for_each(|(h_l, h_r)| {
+                        *h_l = (h_l.into_group() * u + h_r.into_group() * u_inv).into();
+                    });
+            }
+            #[cfg(not(feature = "parallel"))]
+            {
+                for i in 0..n {
+                    a_L[i] = a_L[i] * u + u_inv * a_R[i];
+                    b_L[i] = b_L[i] * u_inv + u * b_R[i];
+                    G_L[i] = (G_L[i].into_group() * u_inv + G_R[i].into_group() * u).into();
+                    H_L[i] = (H_L[i].into_group() * u + H_R[i].into_group() * u_inv).into();
+                }
             }
             println!(
                 "[TIMING IPP] Iter {} folding loop: {:?}",
