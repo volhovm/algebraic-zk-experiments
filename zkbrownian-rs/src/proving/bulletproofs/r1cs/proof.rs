@@ -7,7 +7,6 @@ use ark_serialize::{
 };
 
 use crate::proving::bulletproofs::errors::R1CSError;
-use crate::proving::bulletproofs::inner_product_proof::InnerProductProof;
 
 const ONE_PHASE_COMMITMENTS: u8 = 0;
 const TWO_PHASE_COMMITMENTS: u8 = 1;
@@ -51,8 +50,10 @@ pub struct R1CSProof<C: AffineRepr> {
     /// Blinding factor for the synthetic commitment to the
     /// inner-product arguments
     pub(super) e_blinding: C::ScalarField,
-    /// Proof data for the inner-product argument.
-    pub(super) ipp_proof: InnerProductProof<C>,
+    /// Left vector for the linear proof (replaces IPP).
+    pub(super) l_vec: Vec<C::ScalarField>,
+    /// Right vector for the linear proof (replaces IPP).
+    pub(super) r_vec: Vec<C::ScalarField>,
 }
 
 impl<C: AffineRepr> R1CSProof<C> {
@@ -87,9 +88,10 @@ impl<C: AffineRepr> CanonicalSerialize for R1CSProof<C> {
         let t_size = self.T.serialized_size(compress);
         // size of 3 scalars
         let scalars_size = 3 * self.t_x.serialized_size(compress);
-        // size of the inner product proof
-        let ipp_size = self.ipp_proof.serialized_size(compress);
-        points_size + t_size + scalars_size + ipp_size + 1
+        // size of the l_vec and r_vec vectors
+        let l_vec_size = self.l_vec.serialized_size(compress);
+        let r_vec_size = self.r_vec.serialized_size(compress);
+        points_size + t_size + scalars_size + l_vec_size + r_vec_size + 1
     }
 
     fn serialize_with_mode<W: Write>(
@@ -119,8 +121,9 @@ impl<C: AffineRepr> CanonicalSerialize for R1CSProof<C> {
         self.t_x_blinding
             .serialize_with_mode(&mut writer, compress)?;
         self.e_blinding.serialize_with_mode(&mut writer, compress)?;
-        // serialize inner product argument
-        self.ipp_proof.serialize_with_mode(&mut writer, compress)?;
+        // serialize l_vec and r_vec
+        self.l_vec.serialize_with_mode(&mut writer, compress)?;
+        self.r_vec.serialize_with_mode(&mut writer, compress)?;
 
         Ok(())
     }
@@ -161,11 +164,8 @@ impl<C: AffineRepr> CanonicalDeserialize for R1CSProof<C> {
             t_x: C::ScalarField::deserialize_with_mode(&mut reader, compress, validate)?,
             t_x_blinding: C::ScalarField::deserialize_with_mode(&mut reader, compress, validate)?,
             e_blinding: C::ScalarField::deserialize_with_mode(&mut reader, compress, validate)?,
-            ipp_proof: InnerProductProof::<C>::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-            )?,
+            l_vec: Vec::<C::ScalarField>::deserialize_with_mode(&mut reader, compress, validate)?,
+            r_vec: Vec::<C::ScalarField>::deserialize_with_mode(&mut reader, compress, validate)?,
         })
     }
 }

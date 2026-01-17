@@ -577,14 +577,17 @@ impl<T: BorrowMut<Transcript>, C: AffineRepr> Verifier<T, C> {
         #[cfg(debug_assertions)]
         println!("verifier wVCs = {:?}", &wVCs);
 
-        // Get IPP variables
-        let (u_sq, u_inv_sq, s) = proof
-            .ipp_proof
-            .verification_scalars(padded_n, self.transcript.borrow_mut())
-            .map_err(|_| R1CSError::VerificationError)?;
+        // Linear proof: use l_vec and r_vec directly (no IPP verification)
+        let l_vec = &proof.l_vec;
+        let r_vec = &proof.r_vec;
 
-        let a = proof.ipp_proof.a;
-        let b = proof.ipp_proof.b;
+        // Verify that the vectors have the correct length
+        if l_vec.len() != padded_n || r_vec.len() != padded_n {
+            return Err(R1CSError::VerificationError);
+        }
+
+        // Compute the inner product of l_vec and r_vec
+        let ab = inner_product(l_vec, r_vec);
 
         let y_inv = y.inverse().unwrap();
         let y_inv_vec = util::exp_iter(y_inv)
@@ -611,25 +614,24 @@ impl<T: BorrowMut<Transcript>, C: AffineRepr> Verifier<T, C> {
         debug_assert_eq!(op_aLaR.0, op_aLaR.1);
         let xwR = xs[op_aLaR.0];
 
+        // Linear verification: compute g_scalars directly from l_vec
         let g_scalars = yneg_wR
             .iter()
             .zip(u_for_g)
-            .zip(s.iter().take(padded_n)) // s is from folding
-            .map(|((yneg_wRi, u_or_1), s_i)| u_or_1 * (xwR * yneg_wRi - a * s_i));
+            .zip(l_vec.iter())
+            .map(|((yneg_wRi, u_or_1), l_i)| u_or_1 * (xwR * yneg_wRi - l_i));
 
         // r(x)
         let mut h_scalars = Vec::with_capacity(padded_n);
         {
             let mut wL = wL.into_iter();
             let mut wO = wO.into_iter();
-            let mut s = s.iter().rev().take(padded_n);
             let mut y_inv_vec = y_inv_vec.into_iter();
 
-            for i in 0..padded_n {
+            for (i, r_i) in r_vec.iter().enumerate().take(padded_n) {
                 let y_inv = y_inv_vec.next().unwrap();
                 let u_or_1 = u_for_h.next().unwrap();
 
-                let si = s.next().unwrap();
                 let wLi = wL.next().unwrap_or_default();
                 let wOi = wO.next().unwrap_or_default();
 
@@ -648,7 +650,8 @@ impl<T: BorrowMut<Transcript>, C: AffineRepr> Verifier<T, C> {
                 }
 
                 // y^{-n} o (w_O + w_L * x + w_VCi * x^2)
-                let res = u_or_1 * (y_inv * (comb - b * si) - C::ScalarField::one());
+                // Linear verification: use r_i directly instead of b * s_i
+                let res = u_or_1 * (y_inv * (comb - r_i) - C::ScalarField::one());
 
                 h_scalars.push(res);
             }
@@ -692,8 +695,6 @@ impl<T: BorrowMut<Transcript>, C: AffineRepr> Verifier<T, C> {
             .chain(iter::once(proof.S2))
             .chain(self.V.iter().copied())
             .chain(T_points.iter().copied())
-            .chain(proof.ipp_proof.L_vec.iter().copied())
-            .chain(proof.ipp_proof.R_vec.iter().copied())
             .collect();
 
         let proof_scalars = vscalar
@@ -705,12 +706,10 @@ impl<T: BorrowMut<Transcript>, C: AffineRepr> Verifier<T, C> {
             .chain(iter::once(xS * u)) // S2
             .chain(wV.iter().map(|wVi| *wVi * rxs[op_degree])) // V : at op-degree
             .chain(T_scalars.iter().copied()) // T_points
-            .chain(u_sq) // ipp_proof.L_vec
-            .chain(u_inv_sq) // ipp_proof.R_vec
             .collect::<Vec<_>>();
 
         let fixed_point_scalars: Vec<C::ScalarField> =
-            iter::once(w * (proof.t_x - a * b) + r * (xs[op_degree] * (wc + delta) - proof.t_x)) // B : shift (wc + delta) to the right power
+            iter::once(w * (proof.t_x - ab) + r * (xs[op_degree] * (wc + delta) - proof.t_x)) // B : shift (wc + delta) to the right power
                 .chain(iter::once(-proof.e_blinding - r * proof.t_x_blinding)) // B_blinding
                 .chain(g_scalars) // G
                 .chain(h_scalars) // H

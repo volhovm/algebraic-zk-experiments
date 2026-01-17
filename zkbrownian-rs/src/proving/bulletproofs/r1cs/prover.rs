@@ -15,7 +15,6 @@ use super::proof::R1CSProof;
 
 use crate::proving::bulletproofs::errors::R1CSError;
 use crate::proving::bulletproofs::generators::{BulletproofGens, PedersenGens};
-use crate::proving::bulletproofs::inner_product_proof::InnerProductProof;
 use crate::proving::bulletproofs::r1cs::Metrics;
 use crate::proving::bulletproofs::transcript::TranscriptProtocol;
 
@@ -1214,44 +1213,11 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
         transcript.append_scalar::<C>(b"e_blinding", &e_blinding);
 
         // Get a challenge value to combine statements for the IPP
-        let w = transcript.challenge_scalar::<C>(b"w");
-        let compute_q_start = std::time::Instant::now();
-        let Q = self.pc_gens.B.mul(w).into();
-        println!("[TIMING BP] Compute Q: {:?}", compute_q_start.elapsed());
+        let _w = transcript.challenge_scalar::<C>(b"w");
 
-        let factors_start = std::time::Instant::now();
-        let G_factors = std::iter::repeat_n(C::ScalarField::one(), n1)
-            .chain(std::iter::repeat_n(u, n2 + pad))
-            .collect::<Vec<_>>();
-
-        let H_factors = exp_y_inv
-            .into_iter()
-            .zip(G_factors.iter())
-            .map(|(y_inv, u_or_1)| y_inv * u_or_1)
-            .collect::<Vec<_>>();
-        println!(
-            "[TIMING BP] Compute G_factors and H_factors: {:?}",
-            factors_start.elapsed()
-        );
-
-        // TODO: check if missing \circ y^{-1} on the vec. comm part:
-        // everything in H_generators (r_vec) is mult. by y!
-
-        let ipp_start = std::time::Instant::now();
-        let ipp_proof = InnerProductProof::create(
-            transcript,
-            &Q,
-            &G_factors,
-            &H_factors,
-            gens.G(padded_n).copied().collect(),
-            gens.H(padded_n).copied().collect(),
-            l_vec,
-            r_vec,
-        );
-        println!(
-            "[TIMING BP] Inner product proof (IPP): {:?}",
-            ipp_start.elapsed()
-        );
+        // Linear proof: directly include l_vec and r_vec (no IPP compression)
+        // Note: We no longer need Q, G_factors, H_factors for the linear proof
+        println!("[TIMING BP] Using linear proof (no IPP compression)");
 
         let proof = R1CSProof {
             A_I1,
@@ -1264,7 +1230,8 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
             t_x,
             t_x_blinding,
             e_blinding,
-            ipp_proof,
+            l_vec,
+            r_vec,
         };
         println!(
             "[TIMING BP] Total prove_and_return_transcript: {:?}",
