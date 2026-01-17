@@ -547,8 +547,6 @@ pub fn forward<R: Rng>(
     message: &Message,
     rng: &mut R,
 ) -> ProtocolResult<(Message, usize, Diversifier)> {
-    let forward_start = std::time::Instant::now();
-
     // Step 1: Check hop count
     let nu = message.hop_count();
     if nu >= MAX_HOPS {
@@ -556,7 +554,6 @@ pub fn forward<R: Rng>(
     }
 
     // Step 2: Derive θ = Hash(φ_ν, sid, pid, ν)
-    let hash_start = std::time::Instant::now();
     let hasher = PoseidonHash::new();
     let phi_prev = if nu == 0 {
         // φ_0 = 0 (dummy value)
@@ -588,38 +585,27 @@ pub fn forward<R: Rng>(
     };
 
     let theta = hasher.hash_theta(&phi_prev, message.sid, message.pid, nu);
-    println!("[TIMING] Hash theta: {:?}", hash_start.elapsed());
 
     // Step 3: Compute φ_{ν+1} = G^{1/(θ+sk)}
-    let prf_start = std::time::Instant::now();
     let generator = G1Projective::generator().into_affine();
     let phi_nu_plus_1 = compute_prf(&theta, &user_view.secret_key, &generator)
         .ok_or_else(|| ProtocolError::CryptoError("PRF computation failed (θ+sk=0)".to_string()))?;
-    println!("[TIMING] Compute PRF: {:?}", prf_start.elapsed());
 
     // Step 4: Select next hop
     // Extract ρ_{ν+1} from φ_{ν+1}
-    let select_start = std::time::Instant::now();
     let rho_nu_plus_1 = extract_routing_value(&phi_nu_plus_1);
 
     // Use ρ and user's neighbor view to select next hop
     let (k_r, pk_nu_plus_1, v1, v2) =
         select_next_hop_from_view(rho_nu_plus_1, &user_view.neighbours_view)?;
-    println!("[TIMING] Select next hop: {:?}", select_start.elapsed());
 
     // Step 5: Create diversified public key ppk_{ν+1}
-    let diversify_start = std::time::Instant::now();
     let d = Diversifier {
         d: ScalarField::rand(rng),
     };
     let (ppk_nu_plus_1, _) = diversify_with_diversifier(&pk_nu_plus_1, &d);
-    println!(
-        "[TIMING] Diversify public key: {:?}",
-        diversify_start.elapsed()
-    );
 
     // Step 6: Generate proof π_{ν+1}
-    let proof_start = std::time::Instant::now();
     // Uses precomputed proofs for π_1, π_2, π_3 and generates fresh π_4_g1, π_4_g2
     let (pi_nu_plus_1, c11, c12, c21, c22, cv1, cv2, pk_star, pk_r_star) = generate_forward_proof(
         pp,
@@ -638,13 +624,8 @@ pub fn forward<R: Rng>(
         v2,
         &user_view.precompute,
     )?;
-    println!(
-        "[TIMING] Generate forward proof: {:?}",
-        proof_start.elapsed()
-    );
 
     // Step 7: Create updated message m'
-    let message_start = std::time::Instant::now();
     let mut new_message = message.clone();
     new_message.hops.push(Hop {
         ppk: ppk_nu_plus_1,
@@ -659,9 +640,7 @@ pub fn forward<R: Rng>(
         pk_star,
         pk_r_star,
     });
-    println!("[TIMING] Create message: {:?}", message_start.elapsed());
 
-    println!("[TIMING] Total forward time: {:?}", forward_start.elapsed());
     Ok((new_message, k_r, d))
 }
 
@@ -889,15 +868,11 @@ fn generate_forward_proof(
     // The precomputed commitments use zero randomness (r=0), and we add fresh randomness
     // during each forward operation to ensure unlinkability across hops.
 
-    let gen_proof_start = std::time::Instant::now();
-
     // Generate random blinding factors for rerandomization
-    let rand_start = std::time::Instant::now();
     let r1_new = ScalarField::rand(&mut rand::thread_rng());
     let r2_new = ScalarField::rand(&mut rand::thread_rng());
     let r_v1_new = ScalarField::rand(&mut rand::thread_rng());
     let r_v2_new = ScalarField::rand(&mut rand::thread_rng());
-    println!("[TIMING]   Generate randomness: {:?}", rand_start.elapsed());
 
     // Find the neighbor index in the precompute arrays
     // The neighbors in precompute are in the same order as in neighbours_view
@@ -908,7 +883,6 @@ fn generate_forward_proof(
         .ok_or(ProtocolError::InvalidWeightSelection)?;
 
     // Rerandomize π_1 (sender membership proof) - produces dual commitments C11, C12
-    let pi1_start = std::time::Instant::now();
     let (pi_1, c11, c12) = adjust_groth16_merkle_membership(
         pp,
         &precompute.pi_1_sender,
@@ -916,10 +890,8 @@ fn generate_forward_proof(
         precompute.c12_precomputed,
         r1_new,
     )?;
-    println!("[TIMING]   Rerandomize π_1: {:?}", pi1_start.elapsed());
 
     // Rerandomize π_3 (receiver membership proof) - produces dual commitments C21, C22
-    let pi3_start = std::time::Instant::now();
     let (pi_3, c21, c22) = adjust_groth16_merkle_membership(
         pp,
         &precompute.pi_3_receivers[neighbor_idx],
@@ -927,10 +899,8 @@ fn generate_forward_proof(
         precompute.c22_precomputed[neighbor_idx],
         r2_new,
     )?;
-    println!("[TIMING]   Rerandomize π_3: {:?}", pi3_start.elapsed());
 
     // Rerandomize π_2 (weight subtree proof) - uses C12 and C22
-    let pi2_start = std::time::Instant::now();
     let (c_v1_precomputed, _v1_value) = precompute.c_v1_precomputed[neighbor_idx];
     let (c_v2_precomputed, _v2_value) = precompute.c_v2_precomputed[neighbor_idx];
 
@@ -944,10 +914,8 @@ fn generate_forward_proof(
         r_v1_new,
         r_v2_new,
     )?;
-    println!("[TIMING]   Rerandomize π_2: {:?}", pi2_start.elapsed());
 
     // Extract sender and receiver information for Schnorr proofs (π_4, π_5)
-    let extract_start = std::time::Instant::now();
     use ark_ff::{BigInteger, PrimeField};
     let pk_x_scalar = ScalarField::from_le_bytes_mod_order(&pk.pk.x.into_bigint().to_bytes_le());
     let pk_y_scalar = ScalarField::from_le_bytes_mod_order(&pk.pk.y.into_bigint().to_bytes_le());
@@ -1032,13 +1000,8 @@ fn generate_forward_proof(
 
     // Create commitment G^ρ
     let g_rho = g1_base_proj * rho;
-    println!(
-        "[TIMING]   Extract and setup: {:?}",
-        extract_start.elapsed()
-    );
 
     // Generate proof π_{4,G1}: Schnorr bridging
-    let schnorr_start = std::time::Instant::now();
     // This proof receives all four commitments (C11, C12, C21, C22) and must
     // internally prove witness consistency across different circuit bases
     let schnorr_instance = SchnorrBridgingInstance {
@@ -1087,13 +1050,8 @@ fn generate_forward_proof(
         &precompute.h_g3,
         &precompute.g3_tables,
     )?;
-    println!(
-        "[TIMING]   Prove Schnorr bridging: {:?}",
-        schnorr_start.elapsed()
-    );
 
     // Generate proof π_{4,G2}: Public key operations
-    let pk_ops_start = std::time::Instant::now();
     // Create G^theta commitment
     let g_theta = g1_base_proj * *_theta;
 
@@ -1121,10 +1079,6 @@ fn generate_forward_proof(
     };
 
     let pi_4_g2 = prove_public_key_operations(&pk_ops_instance, &pk_ops_witness)?;
-    println!(
-        "[TIMING]   Prove public key ops: {:?}",
-        pk_ops_start.elapsed()
-    );
 
     let hop_proofs = HopProofs {
         pi_1,
@@ -1134,10 +1088,6 @@ fn generate_forward_proof(
         pi_4_g2,
     };
 
-    println!(
-        "[TIMING]   Total generate_forward_proof: {:?}",
-        gen_proof_start.elapsed()
-    );
     Ok((
         hop_proofs,
         G1Wrapper(c11.into_affine()),
