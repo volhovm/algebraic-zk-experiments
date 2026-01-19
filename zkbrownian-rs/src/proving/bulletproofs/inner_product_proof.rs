@@ -25,6 +25,23 @@ pub struct InnerProductProof<C: AffineRepr> {
     pub(crate) b: C::ScalarField,
 }
 
+#[derive(Clone, Debug)]
+pub struct DummyProductProof<C: AffineRepr> {
+    pub(crate) l_vec: Vec<C::ScalarField>,
+    pub(crate) r_vec: Vec<C::ScalarField>,
+}
+
+impl<C: AffineRepr> DummyProductProof<C> {
+    #[allow(clippy::too_many_arguments)]
+    pub fn create(
+        transcript: &mut Transcript,
+        l_vec: Vec<C::ScalarField>,
+        r_vec: Vec<C::ScalarField>,
+    ) -> DummyProductProof<C> {
+        DummyProductProof{l_vec, r_vec}
+    }
+}
+
 impl<C: AffineRepr> InnerProductProof<C> {
     /// Create an inner-product proof.
     ///

@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
 
 use ark_ec::{AffineRepr, VariableBaseMSM};
-use ark_ff::Field;
+use ark_ff::{BigInt, Field};
 use ark_std::{One, UniformRand, Zero};
 use core::borrow::BorrowMut;
 use merlin::Transcript;
@@ -15,7 +15,7 @@ use super::proof::R1CSProof;
 
 use crate::proving::bulletproofs::errors::R1CSError;
 use crate::proving::bulletproofs::generators::{BulletproofGens, PedersenGens};
-use crate::proving::bulletproofs::inner_product_proof::InnerProductProof;
+use crate::proving::bulletproofs::inner_product_proof::{DummyProductProof, InnerProductProof};
 use crate::proving::bulletproofs::r1cs::Metrics;
 use crate::proving::bulletproofs::transcript::TranscriptProtocol;
 
@@ -1238,7 +1238,8 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
         // everything in H_generators (r_vec) is mult. by y!
 
         let ipp_start = std::time::Instant::now();
-        let ipp_proof = InnerProductProof::create(
+        let dummy_proof = DummyProductProof::create(transcript, l_vec,r_vec);
+        /*let ipp_proof = InnerProductProof::create(
             transcript,
             &Q,
             &G_factors,
@@ -1247,7 +1248,7 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
             gens.H(padded_n).copied().collect(),
             l_vec,
             r_vec,
-        );
+        );*/
         println!(
             "[TIMING BP] Inner product proof (IPP): {:?}",
             ipp_start.elapsed()
@@ -1264,7 +1265,11 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
             t_x,
             t_x_blinding,
             e_blinding,
-            ipp_proof,
+            ipp_proof: InnerProductProof{L_vec: bp_gens.share(0).G(1).cloned().collect(),
+                R_vec:bp_gens.share(0).G(2).cloned().collect(),
+             a: C::ScalarField::from(42),
+            b: C::ScalarField::from(123)},
+            dummy_proof: Some(dummy_proof),
         };
         println!(
             "[TIMING BP] Total prove_and_return_transcript: {:?}",

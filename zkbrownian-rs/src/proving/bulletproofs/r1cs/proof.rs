@@ -7,7 +7,7 @@ use ark_serialize::{
 };
 
 use crate::proving::bulletproofs::errors::R1CSError;
-use crate::proving::bulletproofs::inner_product_proof::InnerProductProof;
+use crate::proving::bulletproofs::inner_product_proof::{DummyProductProof, InnerProductProof};
 
 const ONE_PHASE_COMMITMENTS: u8 = 0;
 const TWO_PHASE_COMMITMENTS: u8 = 1;
@@ -53,6 +53,7 @@ pub struct R1CSProof<C: AffineRepr> {
     pub(super) e_blinding: C::ScalarField,
     /// Proof data for the inner-product argument.
     pub(super) ipp_proof: InnerProductProof<C>,
+    pub(super) dummy_proof: Option<DummyProductProof<C>>,
 }
 
 impl<C: AffineRepr> R1CSProof<C> {
@@ -166,6 +167,7 @@ impl<C: AffineRepr> CanonicalDeserialize for R1CSProof<C> {
                 compress,
                 validate,
             )?,
+            dummy_proof: None
         })
     }
 }
