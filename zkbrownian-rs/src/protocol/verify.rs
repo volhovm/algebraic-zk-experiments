@@ -144,7 +144,7 @@ pub fn verify_batch(
                 crate::types::G1::generator().into_group()
             };
 
-            let pi_4_g1_instance = SchnorrBridgingInstance {
+            let _pi_4_g1_instance = SchnorrBridgingInstance {
                 pk_star_coord,
                 pk_r_star_coord,
                 c11: hop.c11.0.into_group(),
@@ -158,9 +158,11 @@ pub fn verify_batch(
 
             if !verify_schnorr_bridging(
                 &hop.pi.pi_4_g1,
-                &pi_4_g1_instance,
+                &_pi_4_g1_instance,
                 &params.pc_gens,
                 &params.bp_gens,
+                &params.h_g3,
+                &params.g3_tables,
             )? {
                 return Ok(false);
             }
@@ -379,7 +381,7 @@ fn verify_hop_proof(
     };
 
     // Construct π_{4,G1} instance: Schnorr bridging proof
-    let pi_4_g1_instance = SchnorrBridgingInstance {
+    let _pi_4_g1_instance = SchnorrBridgingInstance {
         pk_star_coord,
         pk_r_star_coord,
         c11: hop.c11.0.into_group(),
@@ -394,9 +396,11 @@ fn verify_hop_proof(
     // Verify π_{4,G1}
     if !verify_schnorr_bridging(
         &hop.pi.pi_4_g1,
-        &pi_4_g1_instance,
+        &_pi_4_g1_instance,
         &params.pc_gens,
         &params.bp_gens,
+        &params.h_g3,
+        &params.g3_tables,
     )? {
         return Ok(false);
     }

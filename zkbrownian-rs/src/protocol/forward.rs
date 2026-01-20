@@ -72,11 +72,6 @@ pub struct LocalPrecompute {
     pub pc_gens: crate::proving::bulletproofs::PedersenGens<ark_bls12_381::G1Affine>,
     /// Bulletproof generators for R1CS proofs
     pub bp_gens: crate::proving::bulletproofs::BulletproofGens<ark_bls12_381::G1Affine>,
-
-    /// G3 blinding generator H (from pp.generators.g3(1))
-    pub h_g3: G3,
-    /// Precomputed lookup tables for rerandomize gadget
-    pub g3_tables: Vec<crate::proving::relations::lookup::Lookup3Bit<2, ScalarField>>,
 }
 
 /// A single user's complete view of the protocol
@@ -295,16 +290,6 @@ fn generate_precompute(
         pi_2_weights.push(pi_2);
     }
 
-    // Get G3 blinding generator H (from pp.generators.g3(1))
-    let h3_base = pp
-        .generators
-        .g3(1)
-        .ok_or_else(|| ProtocolError::CryptoError("Missing G3 generator 1".to_string()))?;
-
-    // Build lookup tables for rerandomize gadget
-    use crate::proving::relations::rerandomize::build_tables;
-    let g3_tables = build_tables(*h3_base);
-
     Ok(LocalPrecompute {
         pi_1_sender,
         c11_precomputed,
@@ -317,8 +302,6 @@ fn generate_precompute(
         c_v2_precomputed: c_v2_precomputed_vec,
         pc_gens: pp.pc_gens.clone(),
         bp_gens: pp.bp_gens.clone(),
-        h_g3: *h3_base,
-        g3_tables,
     })
 }
 
@@ -945,14 +928,10 @@ fn generate_forward_proof(
         .generators
         .g3(0)
         .ok_or_else(|| ProtocolError::CryptoError("Missing G3 generator 0".to_string()))?;
-    let h3_base = pp
-        .generators
-        .g3(1)
-        .ok_or_else(|| ProtocolError::CryptoError("Missing G3 generator 1".to_string()))?;
 
     // Convert to projective for scalar multiplication
     let g3_proj = G3Proj::from(*g3_base);
-    let h3_proj = G3Proj::from(*h3_base);
+    let h3_proj = G3Proj::from(pp.h_g3);
 
     // Generate random blinding factors for Schnorr commitments
     let r_star = ScalarField::rand(&mut rand::thread_rng());
@@ -1047,8 +1026,8 @@ fn generate_forward_proof(
         &schnorr_witness,
         &precompute.pc_gens,
         &precompute.bp_gens,
-        &precompute.h_g3,
-        &precompute.g3_tables,
+        &pp.h_g3,
+        &pp.g3_tables,
     )?;
 
     // Generate proof π_{4,G2}: Public key operations

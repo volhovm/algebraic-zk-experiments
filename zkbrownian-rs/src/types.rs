@@ -370,6 +370,10 @@ pub struct PublicParams {
     pub pc_gens: crate::proving::bulletproofs::PedersenGens<ark_bls12_381::G1Affine>,
     /// Bulletproof generators for R1CS proofs
     pub bp_gens: crate::proving::bulletproofs::BulletproofGens<ark_bls12_381::G1Affine>,
+    /// G3 blinding generator H (from pp.generators.g3(1))
+    pub h_g3: G3,
+    /// Precomputed lookup tables for rerandomize gadget
+    pub g3_tables: Vec<crate::proving::relations::lookup::Lookup3Bit<2, ScalarField>>,
 }
 
 impl PublicParams {
@@ -401,6 +405,12 @@ impl PublicParams {
         let pc_gens = PedersenGens::<G1A>::default();
         let bp_gens = BulletproofGens::<G1A>::new(4096, 1);
 
+        // Generate G3 blinding generator H and precompute tables
+        let h_g3 = *generators
+            .g3(1)
+            .ok_or_else(|| ProtocolError::CryptoError("Missing G3 generator 1".to_string()))?;
+        let g3_tables = crate::proving::relations::rerandomize::build_tables(h_g3);
+
         // Generate proving keys using circuit_specific_setup
         // For merkle membership circuit (π_1 and π_3, shared circuit and CRS)
         let merkle_circuit = MerkleMembershipCircuit::<ScalarField> {
@@ -426,6 +436,8 @@ impl PublicParams {
             pk_weight_subtree,
             pc_gens,
             bp_gens,
+            h_g3,
+            g3_tables,
         })
     }
 }
