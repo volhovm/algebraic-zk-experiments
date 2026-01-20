@@ -4,7 +4,7 @@ extern crate merlin;
 extern crate rand;
 
 use ark_ec::AffineRepr;
-use ark_ff::Field;
+use ark_ff::{Field, One};
 use ark_std::UniformRand;
 
 //use ark_pallas::Affine;
@@ -501,4 +501,241 @@ fn range_proof_helper<C: AffineRepr>(v_val: u64, n: usize) -> Result<(), R1CSErr
 
     // Verifier verifies proof
     verifier.verify(&proof, &pc_gens, &bp_gens)
+}
+
+// Soundness tests - verify that modifying proof fields causes verification to fail
+
+#[test]
+fn example_gadget_soundness_modify_l_vec() {
+    type Scalar = <Affine as AffineRepr>::ScalarField;
+
+    // Common
+    let pc_gens = PedersenGens::<Affine>::default();
+    let bp_gens = BulletproofGens::<Affine>::new(128, 1);
+
+    // Create a valid proof for (3 + 4) * (6 + 1) = (40 + 9)
+    let (mut proof, commitments) =
+        example_gadget_proof::<Affine>(&pc_gens, &bp_gens, 3, 4, 6, 1, 40, 9).unwrap();
+
+    // Modify l_vec - change the first element
+    if !proof.l_vec.is_empty() {
+        proof.l_vec[0] += Scalar::one();
+    }
+
+    // Verification should fail
+    let result = example_gadget_verify::<Affine>(&pc_gens, &bp_gens, 9, proof, commitments);
+    assert!(
+        result.is_err(),
+        "Verification should fail when l_vec is modified"
+    );
+}
+
+#[test]
+fn example_gadget_soundness_modify_r_vec() {
+    type Scalar = <Affine as AffineRepr>::ScalarField;
+
+    // Common
+    let pc_gens = PedersenGens::<Affine>::default();
+    let bp_gens = BulletproofGens::<Affine>::new(128, 1);
+
+    // Create a valid proof
+    let (mut proof, commitments) =
+        example_gadget_proof::<Affine>(&pc_gens, &bp_gens, 3, 4, 6, 1, 40, 9).unwrap();
+
+    // Modify r_vec - change the last element
+    if !proof.r_vec.is_empty() {
+        let last_idx = proof.r_vec.len() - 1;
+        proof.r_vec[last_idx] += Scalar::one();
+    }
+
+    // Verification should fail
+    let result = example_gadget_verify::<Affine>(&pc_gens, &bp_gens, 9, proof, commitments);
+    assert!(
+        result.is_err(),
+        "Verification should fail when r_vec is modified"
+    );
+}
+
+#[test]
+fn example_gadget_soundness_modify_A_I1() {
+    use ark_ec::CurveGroup;
+
+    // Common
+    let pc_gens = PedersenGens::<Affine>::default();
+    let bp_gens = BulletproofGens::<Affine>::new(128, 1);
+
+    // Create a valid proof
+    let (mut proof, commitments) =
+        example_gadget_proof::<Affine>(&pc_gens, &bp_gens, 3, 4, 6, 1, 40, 9).unwrap();
+
+    // Modify A_I1 commitment by doubling it
+    proof.A_I1 = (proof.A_I1.into_group() + proof.A_I1.into_group()).into_affine();
+
+    // Verification should fail
+    let result = example_gadget_verify::<Affine>(&pc_gens, &bp_gens, 9, proof, commitments);
+    assert!(
+        result.is_err(),
+        "Verification should fail when A_I1 is modified"
+    );
+}
+
+#[test]
+fn example_gadget_soundness_modify_A_O1() {
+    use ark_ec::CurveGroup;
+
+    // Common
+    let pc_gens = PedersenGens::<Affine>::default();
+    let bp_gens = BulletproofGens::<Affine>::new(128, 1);
+
+    // Create a valid proof
+    let (mut proof, commitments) =
+        example_gadget_proof::<Affine>(&pc_gens, &bp_gens, 3, 4, 6, 1, 40, 9).unwrap();
+
+    // Modify A_O1 commitment
+    proof.A_O1 = (proof.A_O1.into_group() + proof.A_O1.into_group()).into_affine();
+
+    // Verification should fail
+    let result = example_gadget_verify::<Affine>(&pc_gens, &bp_gens, 9, proof, commitments);
+    assert!(
+        result.is_err(),
+        "Verification should fail when A_O1 is modified"
+    );
+}
+
+#[test]
+fn example_gadget_soundness_modify_S1() {
+    use ark_ec::CurveGroup;
+
+    // Common
+    let pc_gens = PedersenGens::<Affine>::default();
+    let bp_gens = BulletproofGens::<Affine>::new(128, 1);
+
+    // Create a valid proof
+    let (mut proof, commitments) =
+        example_gadget_proof::<Affine>(&pc_gens, &bp_gens, 3, 4, 6, 1, 40, 9).unwrap();
+
+    // Modify S1 blinding commitment
+    proof.S1 = (proof.S1.into_group() + proof.S1.into_group()).into_affine();
+
+    // Verification should fail
+    let result = example_gadget_verify::<Affine>(&pc_gens, &bp_gens, 9, proof, commitments);
+    assert!(
+        result.is_err(),
+        "Verification should fail when S1 is modified"
+    );
+}
+
+#[test]
+fn example_gadget_soundness_modify_t_x() {
+    type Scalar = <Affine as AffineRepr>::ScalarField;
+
+    // Common
+    let pc_gens = PedersenGens::<Affine>::default();
+    let bp_gens = BulletproofGens::<Affine>::new(128, 1);
+
+    // Create a valid proof
+    let (mut proof, commitments) =
+        example_gadget_proof::<Affine>(&pc_gens, &bp_gens, 3, 4, 6, 1, 40, 9).unwrap();
+
+    // Modify t_x evaluation
+    proof.t_x += Scalar::one();
+
+    // Verification should fail
+    let result = example_gadget_verify::<Affine>(&pc_gens, &bp_gens, 9, proof, commitments);
+    assert!(
+        result.is_err(),
+        "Verification should fail when t_x is modified"
+    );
+}
+
+#[test]
+fn example_gadget_soundness_modify_t_x_blinding() {
+    type Scalar = <Affine as AffineRepr>::ScalarField;
+
+    // Common
+    let pc_gens = PedersenGens::<Affine>::default();
+    let bp_gens = BulletproofGens::<Affine>::new(128, 1);
+
+    // Create a valid proof
+    let (mut proof, commitments) =
+        example_gadget_proof::<Affine>(&pc_gens, &bp_gens, 3, 4, 6, 1, 40, 9).unwrap();
+
+    // Modify t_x_blinding
+    proof.t_x_blinding += Scalar::one();
+
+    // Verification should fail
+    let result = example_gadget_verify::<Affine>(&pc_gens, &bp_gens, 9, proof, commitments);
+    assert!(
+        result.is_err(),
+        "Verification should fail when t_x_blinding is modified"
+    );
+}
+
+#[test]
+fn example_gadget_soundness_modify_e_blinding() {
+    type Scalar = <Affine as AffineRepr>::ScalarField;
+
+    // Common
+    let pc_gens = PedersenGens::<Affine>::default();
+    let bp_gens = BulletproofGens::<Affine>::new(128, 1);
+
+    // Create a valid proof
+    let (mut proof, commitments) =
+        example_gadget_proof::<Affine>(&pc_gens, &bp_gens, 3, 4, 6, 1, 40, 9).unwrap();
+
+    // Modify e_blinding
+    proof.e_blinding += Scalar::one();
+
+    // Verification should fail
+    let result = example_gadget_verify::<Affine>(&pc_gens, &bp_gens, 9, proof, commitments);
+    assert!(
+        result.is_err(),
+        "Verification should fail when e_blinding is modified"
+    );
+}
+
+#[test]
+fn example_gadget_soundness_modify_T_vec() {
+    use ark_ec::CurveGroup;
+
+    // Common
+    let pc_gens = PedersenGens::<Affine>::default();
+    let bp_gens = BulletproofGens::<Affine>::new(128, 1);
+
+    // Create a valid proof
+    let (mut proof, commitments) =
+        example_gadget_proof::<Affine>(&pc_gens, &bp_gens, 3, 4, 6, 1, 40, 9).unwrap();
+
+    // Modify T vector - if it exists, change the first element
+    if !proof.T.is_empty() {
+        proof.T[0] = (proof.T[0].into_group() + proof.T[0].into_group()).into_affine();
+    }
+
+    // Verification should fail
+    let result = example_gadget_verify::<Affine>(&pc_gens, &bp_gens, 9, proof, commitments);
+    assert!(
+        result.is_err(),
+        "Verification should fail when T vector is modified"
+    );
+}
+
+#[test]
+fn example_gadget_soundness_swap_l_and_r_vectors() {
+    // Common
+    let pc_gens = PedersenGens::<Affine>::default();
+    let bp_gens = BulletproofGens::<Affine>::new(128, 1);
+
+    // Create a valid proof
+    let (mut proof, commitments) =
+        example_gadget_proof::<Affine>(&pc_gens, &bp_gens, 3, 4, 6, 1, 40, 9).unwrap();
+
+    // Swap l_vec and r_vec
+    std::mem::swap(&mut proof.l_vec, &mut proof.r_vec);
+
+    // Verification should fail
+    let result = example_gadget_verify::<Affine>(&pc_gens, &bp_gens, 9, proof, commitments);
+    assert!(
+        result.is_err(),
+        "Verification should fail when l_vec and r_vec are swapped"
+    );
 }

@@ -31,29 +31,29 @@ const TWO_PHASE_COMMITMENTS: u8 = 1;
 #[allow(non_snake_case)]
 pub struct R1CSProof<C: AffineRepr> {
     /// Commitment to the values of input wires in the first phase.
-    pub(super) A_I1: C,
+    pub A_I1: C,
     /// Commitment to the values of output wires in the first phase.
-    pub(super) A_O1: C,
+    pub A_O1: C,
     /// Commitment to the blinding factors in the first phase.
-    pub(super) S1: C,
+    pub S1: C,
     /// Commitment to the values of input wires in the second phase.
-    pub(super) A_I2: C,
+    pub A_I2: C,
     /// Commitment to the values of output wires in the second phase.
-    pub(super) A_O2: C,
+    pub A_O2: C,
     /// Commitment to the blinding factors in the second phase.
-    pub(super) S2: C,
-    pub(super) T: Vec<C>,
+    pub S2: C,
+    pub T: Vec<C>,
     /// Evaluation of the polynomial \\(t(x)\\) at the challenge point \\(x\\)
-    pub(super) t_x: C::ScalarField,
+    pub t_x: C::ScalarField,
     /// Blinding factor for the synthetic commitment to \\( t(x) \\)
-    pub(super) t_x_blinding: C::ScalarField,
+    pub t_x_blinding: C::ScalarField,
     /// Blinding factor for the synthetic commitment to the
     /// inner-product arguments
-    pub(super) e_blinding: C::ScalarField,
+    pub e_blinding: C::ScalarField,
     /// Left vector for the linear proof (replaces IPP).
-    pub(super) l_vec: Vec<C::ScalarField>,
+    pub l_vec: Vec<C::ScalarField>,
     /// Right vector for the linear proof (replaces IPP).
-    pub(super) r_vec: Vec<C::ScalarField>,
+    pub r_vec: Vec<C::ScalarField>,
 }
 
 impl<C: AffineRepr> R1CSProof<C> {
