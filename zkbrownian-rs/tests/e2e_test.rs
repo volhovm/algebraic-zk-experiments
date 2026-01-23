@@ -81,7 +81,7 @@ fn test_basic_forward_protocol() {
     let mut current_message = message;
     let mut current_node_index = spawner_index;
 
-    let num_hops = MAX_HOPS.min(3);
+    let num_hops = MAX_HOPS.min(30);
     let start_time = Instant::now();
 
     for hop in 0..num_hops {
@@ -172,11 +172,15 @@ fn test_basic_forward_protocol() {
     .expect("Batch verification error");
     let verification_elapsed = verification_start.elapsed();
 
+    // Calculate total number of Schnorr signatures (hops)
+    let total_schnorr_sigs: usize = messages_to_verify.iter().map(|msg| msg.hop_count()).sum();
+
     println!(
-        "  ✓ Batch verified {} messages in {:.2} ms ({:.2} ms per message)",
+        "  ✓ Batch verified {} messages ({} total Schnorr signatures) in {:.2} ms ({:.2} ms per Schnorr)",
         messages_to_verify.len(),
+        total_schnorr_sigs,
         verification_elapsed.as_secs_f64() * 1000.0,
-        verification_elapsed.as_secs_f64() * 1000.0 / messages_to_verify.len() as f64
+        verification_elapsed.as_secs_f64() * 1000.0 / total_schnorr_sigs as f64
     );
     println!("  All messages valid: {}", all_valid);
 
@@ -350,22 +354,37 @@ fn test_full_protocol() {
         );
     }
 
+    // Step 6: Summary
+    println!("\n=== Protocol Summary ===");
+    let all_messages = bulletin_board.get_all_messages();
+
+    // Calculate total number of Schnorr signatures across all verified messages
+    let total_schnorr_sigs: usize = all_messages
+        .iter()
+        .map(|entry| entry.message.hop_count())
+        .sum();
+
     // Print verification statistics
     println!("\n=== Verification Summary ===");
     println!("  Total messages verified: {}", total_verifications);
     println!(
-        "  Total verification time: {:.2} ms ({:.2} ms per message)",
+        "  Total verification time: {:.2} ms ({:.2} ms per message, {:.2} ms per Schnorr)",
         total_verification_time,
         if total_verifications > 0 {
             total_verification_time / total_verifications as f64
         } else {
             0.0
+        },
+        if total_schnorr_sigs > 0 {
+            total_verification_time / total_schnorr_sigs as f64
+        } else {
+            0.0
         }
     );
-
-    // Step 6: Summary
-    println!("\n=== Protocol Summary ===");
-    let all_messages = bulletin_board.get_all_messages();
+    println!(
+        "  Total Schnorr signatures verified: {}",
+        total_schnorr_sigs
+    );
     println!("  Total messages on bulletin board: {}", all_messages.len());
     println!(
         "  Expected messages: {}",
@@ -454,7 +473,7 @@ fn test_full_protocol_concurrent() {
         Arc::new((0..num_nodes).map(|_| Mutex::new(Vec::new())).collect());
 
     // Step 4: Each user spawns packets
-    const NUM_PACKETS_PER_USER: usize = 10;
+    const NUM_PACKETS_PER_USER: usize = 250;
     const TTL: usize = 5;
 
     println!(
@@ -537,14 +556,74 @@ fn test_full_protocol_concurrent() {
             let mut idle_iterations = 0;
             let mut processing_iterations = 0;
 
+            // Exit condition: track when all queues first became empty
+            // Only exit after ALL queues have been empty for this duration
+            let mut all_empty_since: Option<Instant> = None;
+            const EMPTY_DURATION_THRESHOLD: Duration = Duration::from_secs(5);
+
             println!(
                 "  [Node {}] Thread started, processing messages...",
                 node_idx
             );
 
+            // Track when we last processed messages (for batching)
+            let mut last_process_time = Instant::now();
+            const BATCH_ACCUMULATION_DURATION: Duration = Duration::from_secs(5);
+
             // Each node continuously reads from its queue and processes messages
             loop {
                 let loop_start = Instant::now();
+
+                // Check if enough time has passed since last processing
+                let time_since_last_process = last_process_time.elapsed();
+                let should_process = time_since_last_process >= BATCH_ACCUMULATION_DURATION;
+
+                if !should_process {
+                    // Not enough time has passed, sleep briefly and continue
+                    idle_iterations += 1;
+                    thread::sleep(Duration::from_millis(100));
+                    total_idle_time += loop_start.elapsed();
+
+                    // Check if ALL queues are empty (exit condition)
+                    let queue_sizes: Vec<usize> = message_queues_clone
+                        .iter()
+                        .map(|q| q.lock().unwrap().len())
+                        .collect();
+                    let all_queues_empty = queue_sizes.iter().all(|&size| size == 0);
+
+                    if all_queues_empty && verification_count > 0 {
+                        // Track how long all queues have been empty
+                        if all_empty_since.is_none() {
+                            all_empty_since = Some(Instant::now());
+                            println!(
+                                "  [Node {}] All queues empty, starting {:.0}s countdown to exit...",
+                                node_idx, EMPTY_DURATION_THRESHOLD.as_secs_f64()
+                            );
+                        }
+
+                        let empty_duration = all_empty_since.unwrap().elapsed();
+                        if empty_duration >= EMPTY_DURATION_THRESHOLD {
+                            // All queues have been empty for the threshold duration
+                            println!(
+                                "  [Node {}] EXITING: all queues empty for {:.1}s, verified {} messages",
+                                node_idx, empty_duration.as_secs_f64(), verification_count
+                            );
+                            break;
+                        }
+                    } else if all_empty_since.is_some() {
+                        // Queues were empty but now have messages again, reset the timer
+                        println!(
+                            "  [Node {}] Queues were empty but now have messages, resetting exit timer",
+                            node_idx
+                        );
+                        all_empty_since = None;
+                    }
+
+                    continue;
+                }
+
+                // Time to process accumulated messages
+                last_process_time = Instant::now();
 
                 // Read and clear the queue
                 let messages = {
@@ -553,48 +632,23 @@ fn test_full_protocol_concurrent() {
                 };
 
                 if messages.is_empty() {
-                    // No messages in our queue, check if ALL queues are empty
-                    let queue_sizes: Vec<usize> = message_queues_clone
-                        .iter()
-                        .map(|q| q.lock().unwrap().len())
-                        .collect();
-                    let all_queues_empty = queue_sizes.iter().all(|&size| size == 0);
-
-                    if all_queues_empty && verification_count > 0 {
-                        // All queues are empty AND we've processed at least one message
-                        // This means the protocol is complete
-                        println!(
-                            "  [Node {}] EXITING: all queues empty, verified {} messages",
-                            node_idx, verification_count
-                        );
-                        break;
-                    }
-
-                    // Our queue is empty but other queues have messages
-                    // Sleep and give other threads a chance to forward messages to us
+                    // No messages accumulated, continue
                     idle_iterations += 1;
-                    thread::sleep(Duration::from_millis(10));
-                    total_idle_time += loop_start.elapsed();
-
-                    // Log periodically when idle
-                    if idle_iterations % 50 == 0 {
-                        println!(
-                            "  [Node {}] Idle check #{}: my queue empty, total across all queues: {}, verified={}, forwarded={}, final={}",
-                            node_idx, idle_iterations, queue_sizes.iter().sum::<usize>(), verification_count, forwarded_count, final_messages_count
-                        );
-                    }
-
                     continue;
                 }
 
                 processing_iterations += 1;
 
-                if verification_count % 10 == 0 && verification_count > 0 {
-                    println!(
-                        "  [Node {}] Processed {} messages (forwarded: {}, final: {})",
-                        node_idx, verification_count, forwarded_count, final_messages_count
-                    );
+                // Reset the empty timer since we're processing messages
+                if all_empty_since.is_some() {
+                    all_empty_since = None;
                 }
+
+                // Log batch processing
+                println!(
+                    "  [Node {}] BATCH PROCESSING: processing {} messages accumulated over {:.1}s (verified so far: {}, forwarded: {}, final: {})",
+                    node_idx, messages.len(), time_since_last_process.as_secs_f64(), verification_count, forwarded_count, final_messages_count
+                );
 
                 // Verify the message
                 let verify_start = Instant::now();
@@ -632,10 +686,17 @@ fn test_full_protocol_concurrent() {
                                 node_idx, current_hops
                             );
                         }
-                        if final_messages_count % 10 == 0 {
+                        if final_messages_count % 50 == 0 {
                             println!(
                                 "  [Node {}] Received {} messages at TTL so far [sid={}, pid={}]",
                                 node_idx, final_messages_count, message.sid, message.pid
+                            );
+                        }
+                        // Debug: log messages with hops > TTL
+                        if current_hops > TTL {
+                            println!(
+                                "  [Node {}] WARNING: Message exceeded TTL! hops={} (TTL={}) [sid={}, pid={}]",
+                                node_idx, current_hops, TTL, message.sid, message.pid
                             );
                         }
                         // Don't forward, just continue to next message
@@ -648,19 +709,6 @@ fn test_full_protocol_concurrent() {
                         forward(&pp_clone, &user_view, &message, &mut rng)
                             .expect("Failed to forward message");
                     total_forward_time += forward_start.elapsed();
-
-                    // Debug: log first few forwards with message details
-                    if forwarded_count < 3 {
-                        println!(
-                            "  [Node {}] Forwarding to Node {} (hops: {} -> {}) [sid={}, pid={}]",
-                            node_idx,
-                            next_node_index,
-                            current_hops,
-                            new_message.hop_count(),
-                            message.sid,
-                            message.pid
-                        );
-                    }
 
                     // Post to bulletin board
                     let entry = BulletinBoardEntry {
@@ -676,7 +724,7 @@ fn test_full_protocol_concurrent() {
                     message_queues_clone[next_node_index]
                         .lock()
                         .unwrap()
-                        .push((new_message, _origin_user));
+                        .push((new_message.clone(), _origin_user));
                 }
             }
 
@@ -831,10 +879,22 @@ fn test_full_protocol_concurrent() {
     );
 
     // Per-operation averages
+    // Calculate total number of Schnorr signatures across all verified messages
+    let total_schnorr_sigs: usize = bulletin_board_messages
+        .iter()
+        .map(|entry| entry.message.hop_count())
+        .sum();
+
     if total_verifications > 0 {
         println!(
-            "  Average verification time: {:.2} ms/msg",
-            (aggregate_verify_time.as_secs_f64() * 1000.0) / total_verifications as f64
+            "  Average verification time: {:.2} ms/msg ({:.2} ms/Schnorr, {} total Schnorr sigs)",
+            (aggregate_verify_time.as_secs_f64() * 1000.0) / total_verifications as f64,
+            if total_schnorr_sigs > 0 {
+                (aggregate_verify_time.as_secs_f64() * 1000.0) / total_schnorr_sigs as f64
+            } else {
+                0.0
+            },
+            total_schnorr_sigs
         );
     }
     if total_forwarded > 0 {
