@@ -12,7 +12,7 @@ pub use self::linear_combination::{constant, LinearCombination, Variable};
 pub use self::metrics::Metrics;
 pub use self::proof::R1CSProof;
 pub use self::prover::Prover;
-pub use self::verifier::{batch_verify, VerificationTuple, Verifier};
+pub use self::verifier::{batch_verify, batch_verify_parallel, VerificationTuple, Verifier};
 
 pub use crate::proving::bulletproofs::errors::R1CSError;
 

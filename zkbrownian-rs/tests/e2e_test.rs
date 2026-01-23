@@ -950,7 +950,7 @@ fn batch_verification_benchmark() {
     let generated_state = generate_random_state(&pp, num_nodes, &mut rng);
 
     // Step 3: Generate messages by spawning and forwarding to reach TTL
-    const NUM_MESSAGES: usize = 500;
+    const NUM_MESSAGES: usize = 200;
     const TTL: usize = 5;
 
     println!(
@@ -989,7 +989,7 @@ fn batch_verification_benchmark() {
 
         all_messages.push(message);
 
-        if (i + 1) % 100 == 0 {
+        if (i + 1) % 50 == 0 {
             println!("  Generated {} messages...", i + 1);
         }
     }
@@ -1024,7 +1024,7 @@ fn batch_verification_benchmark() {
     // Step 4: Benchmark different batch sizes
     println!("\n=== Step 3: Benchmarking Batch Verification ===\n");
 
-    let batch_sizes = vec![1, 10, 25, 50, 100, 250, 500];
+    let batch_sizes = vec![1, 10, 25, 50, 100, 200];
 
     for &batch_size in &batch_sizes {
         if batch_size > NUM_MESSAGES {

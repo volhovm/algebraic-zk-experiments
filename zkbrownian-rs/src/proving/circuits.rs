@@ -679,7 +679,7 @@ pub fn verify_schnorr_bridging_batch(
     }
 
     // Step 3: Batch verify all proofs at once
-    batch_verify(verification_tuples, pc_gens, bp_gens)
+    batch_verify_parallel(verification_tuples, pc_gens, bp_gens)
         .map_err(|e| ProtocolError::CryptoError(format!("Batch verification failed: {:?}", e)))?;
 
     Ok(true)

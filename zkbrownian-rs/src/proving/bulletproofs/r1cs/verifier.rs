@@ -800,3 +800,113 @@ pub fn batch_verify<C: AffineRepr>(
 
     Ok(())
 }
+
+/// Parallelized batch verification using rayon for concurrent scalar multiplications.
+///
+/// This function performs the same verification as `batch_verify` but parallelizes
+/// the scalar multiplication operations across verification tuples using rayon.
+pub fn batch_verify_parallel<C>(
+    verification_tuples: Vec<VerificationTuple<C>>,
+    pc_gens: &PedersenGens<C>,
+    bp_gens: &BulletproofGens<C>,
+) -> Result<(), R1CSError>
+where
+    C: AffineRepr + Send + Sync,
+    C::ScalarField: Send + Sync,
+{
+    use rayon::prelude::*;
+
+    if verification_tuples.is_empty() {
+        return Err(R1CSError::VerificationError);
+    }
+
+    let mut rng = rand::thread_rng();
+
+    // Pre-generate random scalars for all tuples (except the first one which doesn't need scaling)
+    let random_scalars: Vec<C::ScalarField> = (0..verification_tuples.len() - 1)
+        .map(|_| C::ScalarField::rand(&mut rng))
+        .collect();
+
+    // Extract the first tuple to initialize accumulators
+    let mut ver_iter = verification_tuples.into_iter();
+    let first_vt = ver_iter.next().unwrap();
+    let padded_n = (first_vt.proof_independent_scalars.len() - 2) / 2;
+
+    // Collect remaining tuples
+    let remaining_tuples: Vec<_> = ver_iter.collect();
+
+    // Process all remaining tuples in parallel
+    let processed_tuples: Vec<_> = remaining_tuples
+        .into_par_iter()
+        .zip(random_scalars.par_iter())
+        .map(|(vt, &random_scalar)| {
+            // Multiply all scalars by the random scalar in parallel
+            let scaled_proof_scalars: Vec<_> = vt
+                .proof_dependent_scalars
+                .par_iter()
+                .map(|s| *s * random_scalar)
+                .collect();
+
+            let scaled_independent_scalars: Vec<_> = vt
+                .proof_independent_scalars
+                .par_iter()
+                .map(|s| *s * random_scalar)
+                .collect();
+
+            (
+                vt.proof_dependent_points,
+                scaled_proof_scalars,
+                scaled_independent_scalars,
+            )
+        })
+        .collect();
+
+    // Sequential aggregation phase (this is cheap - just collecting vectors)
+    let mut proof_points = first_vt.proof_dependent_points;
+    let mut proof_point_scalars = first_vt.proof_dependent_scalars;
+    let mut linear_combination = first_vt.proof_independent_scalars;
+
+    for (mut points, mut scalars, independent_scalars) in processed_tuples {
+        proof_points.append(&mut points);
+        proof_point_scalars.append(&mut scalars);
+
+        // Add to linear combination
+        linear_combination = linear_combination
+            .par_iter()
+            .zip(independent_scalars.par_iter())
+            .map(|(a, b)| *a + *b)
+            .collect();
+    }
+
+    // We are performing a single-party circuit proof, so party index is 0.
+    let gens = bp_gens.share(0);
+
+    if bp_gens.gens_capacity < padded_n {
+        return Err(R1CSError::InvalidGeneratorsLength);
+    }
+
+    use std::iter;
+    let fixed_points = iter::once(pc_gens.B)
+        .chain(iter::once(pc_gens.B_blinding))
+        .chain(gens.G(padded_n).copied())
+        .chain(gens.H(padded_n).copied());
+
+    let mega_check: C::Group = C::Group::msm_unchecked(
+        proof_points
+            .into_iter()
+            .chain(fixed_points)
+            .collect::<Vec<_>>()
+            .as_slice(),
+        proof_point_scalars
+            .into_iter()
+            .chain(linear_combination)
+            .collect::<Vec<_>>()
+            .as_slice(),
+    );
+
+    if !mega_check.is_zero() {
+        return Err(R1CSError::VerificationError);
+    }
+
+    Ok(())
+}
