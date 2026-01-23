@@ -835,7 +835,7 @@ fn generate_forward_proof(
 
     // Convert to projective for scalar multiplication
     let g1_base_proj = G1Projective::from(*g1_base);
-    let g2_base_proj = G1Projective::from(*g2_base);
+    let _g2_base_proj = G1Projective::from(*g2_base);
     let _g3_base_proj = G1Projective::from(*g3_base);
     let _g4_base_proj = G1Projective::from(*g4_base);
 
@@ -967,13 +967,6 @@ fn generate_forward_proof(
     let h_r_r_star = (h3_proj * r_r_star_g3).into_affine();
     let pk_r_star_blinded = (pk_r_star_g3 + h_r_r_star).into_affine();
 
-    // Create coordinate commitments for pk_star and pk_r_star
-    // pk_star_coord = G1^{pk_star_x} * G2^{pk_star_y}
-    let pk_star_coord = (g1_base_proj * pk_star_x_scalar) + (g2_base_proj * pk_star_y_scalar);
-
-    // pk_r_star_coord = G1^{pk_r_star_x} * G2^{pk_r_star_y}
-    let pk_r_star_coord = (g1_base_proj * pk_r_star_x_scalar) + (g2_base_proj * pk_r_star_y_scalar);
-
     // Extract routing value ρ from phi
     let rho = ScalarField::from(extract_routing_value(_phi_nu_plus_1));
 
@@ -984,8 +977,8 @@ fn generate_forward_proof(
     // This proof receives all four commitments (C11, C12, C21, C22) and must
     // internally prove witness consistency across different circuit bases
     let schnorr_instance = SchnorrBridgingInstance {
-        pk_star_coord,
-        pk_r_star_coord,
+        pk_star_blinded,
+        pk_r_star_blinded,
         c11, // Sender with merkle circuit bases (goes into π_1 and π_4)
         c12, // Sender with weight circuit bases (goes into π_2 and π_4)
         c21, // Receiver with merkle circuit bases (goes into π_3 and π_4)
@@ -1009,10 +1002,6 @@ fn generate_forward_proof(
         v2,
         r_v2: r_v2_new,
         rho,
-        pk_star_x: pk_star_x_scalar,
-        pk_star_y: pk_star_y_scalar,
-        pk_r_star_x: pk_r_star_x_scalar,
-        pk_r_star_y: pk_r_star_y_scalar,
         r_star,
         r_r_star,
         pk_star_g3,

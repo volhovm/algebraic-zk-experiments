@@ -275,10 +275,10 @@ pub fn verify_weight_subtree(
 /// and that C21 and C22 open to the same witness (receiver).
 #[derive(Clone, Debug)]
 pub struct SchnorrBridgingInstance {
-    /// Commitment to pk_star coordinates: G1^{pk_star_x} * G2^{pk_star_y}
-    pub pk_star_coord: G1Projective,
-    /// Commitment to pk_r_star coordinates: G1^{pk_r_star_x} * G2^{pk_r_star_y}
-    pub pk_r_star_coord: G1Projective,
+    /// pk_star_blinded = pk_star + H * r_star (public G3 point)
+    pub pk_star_blinded: G3,
+    /// pk_r_star_blinded = pk_r_star + H * r_r_star (public G3 point)
+    pub pk_r_star_blinded: G3,
     /// Commitment to sender with merkle circuit bases (C11)
     pub c11: G1Projective,
     /// Commitment to sender with weight circuit bases (C12)
@@ -331,16 +331,6 @@ pub struct SchnorrBridgingWitness {
     // Routing value
     /// Routing value ρ
     pub rho: ScalarField,
-
-    // Coordinates of pk_star and pk_r_star in G3
-    /// pk_star x-coordinate (converted to BLS12-381 scalar field)
-    pub pk_star_x: ScalarField,
-    /// pk_star y-coordinate (converted to BLS12-381 scalar field)
-    pub pk_star_y: ScalarField,
-    /// pk_r_star x-coordinate (converted to BLS12-381 scalar field)
-    pub pk_r_star_x: ScalarField,
-    /// pk_r_star y-coordinate (converted to BLS12-381 scalar field)
-    pub pk_r_star_y: ScalarField,
 
     // Blinding factors for pk_star and pk_r_star
     /// Blinding factor r_star for pk_star = G^{sk} * H^{r_star}
@@ -496,10 +486,9 @@ pub fn prove_schnorr_bridging(
 /// true if proof is valid, false otherwise
 pub fn verify_schnorr_bridging(
     proof: &Schnorr<G1>,
-    _instance: &SchnorrBridgingInstance,
+    instance: &SchnorrBridgingInstance,
     pc_gens: &PedersenGens<G1A>,
     bp_gens: &BulletproofGens<G1A>,
-    _h_g3: &G3,
     g3_tables: &[crate::proving::relations::lookup::Lookup3Bit<2, ScalarField>],
 ) -> ProtocolResult<bool> {
     use crate::proving::bulletproofs::r1cs::*;
@@ -517,16 +506,28 @@ pub fn verify_schnorr_bridging(
     let r1cs_proof = R1CSProof::deserialize_compressed(&mut cursor)
         .map_err(|e| ProtocolError::CryptoError(format!("Deserialization failed: {:?}", e)))?;
 
+    // Extract the public G3 points from the instance
+    // Note: We need to extract coordinates from pk_star_g3 and pk_star_blinded
+    // However, pk_star_g3 is private (witness), so we can't use it in verification
+    // The verifier only has access to pk_star_blinded (the public instance)
+    // The prover proves knowledge of pk_star_g3 and r_star such that:
+    // pk_star_blinded = pk_star_g3 + H * r_star
+
+    // For now, we verify the rerandomize relation structure without binding to specific values
+    // This is a TODO that needs proper handling when we have the full protocol context
+
     // Verify both rerandomize calls in a single proof
     {
         let mut transcript = Transcript::new(b"SchnorrBridging");
         let mut verifier: Verifier<_, G1A> = Verifier::new(&mut transcript);
 
-        // First rerandomize: pk_star_coord
+        // First rerandomize: pk_star
+        // The prover allocated: pk_star_g3.x, pk_star_g3.y, pk_star_blinded.x, pk_star_blinded.y
+        // The verifier needs to allocate variables and bind them to the public instance
         let c_x_var = verifier.allocate(None).unwrap();
         let c_y_var = verifier.allocate(None).unwrap();
-        let c_x_tilde_var = verifier.allocate(None).unwrap();
-        let c_y_tilde_var = verifier.allocate(None).unwrap();
+        let c_x_tilde_var = verifier.allocate(Some(instance.pk_star_blinded.x)).unwrap();
+        let c_y_tilde_var = verifier.allocate(Some(instance.pk_star_blinded.y)).unwrap();
 
         re_randomize::<_, _, JubjubConfig, _>(
             &mut verifier,
@@ -541,11 +542,15 @@ pub fn verify_schnorr_bridging(
             None,
         );
 
-        // Second rerandomize: pk_r_star_coord
+        // Second rerandomize: pk_r_star
         let c_r_x_var = verifier.allocate(None).unwrap();
         let c_r_y_var = verifier.allocate(None).unwrap();
-        let c_r_x_tilde_var = verifier.allocate(None).unwrap();
-        let c_r_y_tilde_var = verifier.allocate(None).unwrap();
+        let c_r_x_tilde_var = verifier
+            .allocate(Some(instance.pk_r_star_blinded.x))
+            .unwrap();
+        let c_r_y_tilde_var = verifier
+            .allocate(Some(instance.pk_r_star_blinded.y))
+            .unwrap();
 
         re_randomize::<_, _, JubjubConfig, _>(
             &mut verifier,
@@ -742,11 +747,6 @@ mod tests {
 
         let rho = ScalarField::rand(&mut rng);
 
-        let pk_star_x = ScalarField::rand(&mut rng);
-        let pk_star_y = ScalarField::rand(&mut rng);
-        let pk_r_star_x = ScalarField::rand(&mut rng);
-        let pk_r_star_y = ScalarField::rand(&mut rng);
-
         let r_star = ScalarField::rand(&mut rng);
         let r_r_star = ScalarField::rand(&mut rng);
 
@@ -776,10 +776,6 @@ mod tests {
             v2,
             r_v2,
             rho,
-            pk_star_x,
-            pk_star_y,
-            pk_r_star_x,
-            pk_r_star_y,
             r_star,
             r_r_star,
             pk_star_g3,
@@ -789,8 +785,6 @@ mod tests {
         };
 
         // Create instance with random commitments
-        let pk_star_coord = G1Projective::rand(&mut rng);
-        let pk_r_star_coord = G1Projective::rand(&mut rng);
         let c11 = G1Projective::rand(&mut rng);
         let c12 = G1Projective::rand(&mut rng);
         let c21 = G1Projective::rand(&mut rng);
@@ -800,8 +794,8 @@ mod tests {
         let g_rho = G1Projective::rand(&mut rng);
 
         let instance = SchnorrBridgingInstance {
-            pk_star_coord,
-            pk_r_star_coord,
+            pk_star_blinded,
+            pk_r_star_blinded,
             c11,
             c12,
             c21,
@@ -818,7 +812,7 @@ mod tests {
 
         // Verify proof
         let verification_result =
-            verify_schnorr_bridging(&proof, &instance, &pc_gens, &bp_gens, &h_g3, &g3_tables);
+            verify_schnorr_bridging(&proof, &instance, &pc_gens, &bp_gens, &g3_tables);
 
         match verification_result {
             Ok(true) => println!("✓ Schnorr bridging proof verification succeeded"),
@@ -873,10 +867,6 @@ mod tests {
             v2: 200u64,
             r_v2: ScalarField::rand(&mut rng),
             rho: ScalarField::rand(&mut rng),
-            pk_star_x: ScalarField::rand(&mut rng),
-            pk_star_y: ScalarField::rand(&mut rng),
-            pk_r_star_x: ScalarField::rand(&mut rng),
-            pk_r_star_y: ScalarField::rand(&mut rng),
             r_star,
             r_r_star,
             pk_star_g3,
@@ -886,8 +876,8 @@ mod tests {
         };
 
         let instance = SchnorrBridgingInstance {
-            pk_star_coord: G1Projective::rand(&mut rng),
-            pk_r_star_coord: G1Projective::rand(&mut rng),
+            pk_star_blinded,
+            pk_r_star_blinded,
             c11: G1Projective::rand(&mut rng),
             c12: G1Projective::rand(&mut rng),
             c21: G1Projective::rand(&mut rng),
@@ -912,14 +902,8 @@ mod tests {
         // the prover's H (which used seed 12345). This should cause verification to fail.
         let h_g3_verifier = G3::rand(&mut rng);
         let g3_tables_verifier = build_tables(h_g3_verifier);
-        let verification_result = verify_schnorr_bridging(
-            &proof,
-            &instance,
-            &pc_gens,
-            &bp_gens,
-            &h_g3_verifier,
-            &g3_tables_verifier,
-        );
+        let verification_result =
+            verify_schnorr_bridging(&proof, &instance, &pc_gens, &bp_gens, &g3_tables_verifier);
 
         // This should fail because the H values don't match
         verification_result.expect("Verification failed");

@@ -126,27 +126,9 @@ pub fn verify_batch(
             };
 
             // π_{4,G1}: Schnorr bridging proof
-            let pk_star_coord = {
-                let (_x, _y) = hop
-                    .pk_star
-                    .0
-                    .xy()
-                    .unwrap_or((ark_bls12_381::Fr::from(0u64), ark_bls12_381::Fr::from(0u64)));
-                crate::types::G1::generator().into_group()
-            };
-
-            let pk_r_star_coord = {
-                let (_x, _y) = hop
-                    .pk_r_star
-                    .0
-                    .xy()
-                    .unwrap_or((ark_bls12_381::Fr::from(0u64), ark_bls12_381::Fr::from(0u64)));
-                crate::types::G1::generator().into_group()
-            };
-
             let _pi_4_g1_instance = SchnorrBridgingInstance {
-                pk_star_coord,
-                pk_r_star_coord,
+                pk_star_blinded: hop.pk_star.0,
+                pk_r_star_blinded: hop.pk_r_star.0,
                 c11: hop.c11.0.into_group(),
                 c12: hop.c12.0.into_group(),
                 c21: hop.c21.0.into_group(),
@@ -161,7 +143,6 @@ pub fn verify_batch(
                 &_pi_4_g1_instance,
                 &params.pc_gens,
                 &params.bp_gens,
-                &params.h_g3,
                 &params.g3_tables,
             )? {
                 return Ok(false);
@@ -360,30 +341,10 @@ fn verify_hop_proof(
     // These would need to be computed from pk_star and pk_r_star coordinates
     // For now, use placeholder commitments
     use ark_ec::AffineRepr;
-    let pk_star_coord = {
-        let (_x, _y) = hop
-            .pk_star
-            .0
-            .xy()
-            .unwrap_or((ark_bls12_381::Fr::from(0u64), ark_bls12_381::Fr::from(0u64)));
-        // Convert to G1 commitment: would need actual commitment computation
-        crate::types::G1::generator().into_group()
-    };
-
-    let pk_r_star_coord = {
-        let (_x, _y) = hop
-            .pk_r_star
-            .0
-            .xy()
-            .unwrap_or((ark_bls12_381::Fr::from(0u64), ark_bls12_381::Fr::from(0u64)));
-        // Convert to G1 commitment: would need actual commitment computation
-        crate::types::G1::generator().into_group()
-    };
-
     // Construct π_{4,G1} instance: Schnorr bridging proof
     let _pi_4_g1_instance = SchnorrBridgingInstance {
-        pk_star_coord,
-        pk_r_star_coord,
+        pk_star_blinded: hop.pk_star.0,
+        pk_r_star_blinded: hop.pk_r_star.0,
         c11: hop.c11.0.into_group(),
         c12: hop.c12.0.into_group(),
         c21: hop.c21.0.into_group(),
@@ -399,7 +360,6 @@ fn verify_hop_proof(
         &_pi_4_g1_instance,
         &params.pc_gens,
         &params.bp_gens,
-        &params.h_g3,
         &params.g3_tables,
     )? {
         return Ok(false);
