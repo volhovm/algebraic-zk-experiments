@@ -8,8 +8,9 @@ use crate::types::*;
 ///
 /// This implementation optimizes verification by:
 /// 1. Preparing verification keys only once (instead of per-hop)
-/// 2. Batching similar proof types together for batch pairing verification
-/// 3. Using MSM (multi-scalar multiplication) for efficient linear combinations
+/// 2. Batching Groth16 proofs (π_1, π_2, π_3) by type for efficient pairing verification
+/// 3. Batching Schnorr bridging proofs (π_{4,G1}) using bulletproofs batch verification
+/// 4. Using MSM (multi-scalar multiplication) for efficient linear combinations
 ///
 /// # Arguments
 /// * `messages` - Slice of messages to verify
@@ -50,6 +51,7 @@ pub fn verify_batch(
     // Step 2: Collect all proofs by type for batch verification
     let mut merkle_proofs_and_inputs = Vec::new();
     let mut weight_proofs_and_inputs = Vec::new();
+    let mut schnorr_proofs_and_instances = Vec::new();
 
     for message in messages {
         for (hop_index, hop) in message.hops.iter().enumerate() {
@@ -108,8 +110,7 @@ pub fn verify_batch(
             })?;
             merkle_proofs_and_inputs.push((hop.pi.pi_3.clone(), pi_3_input));
 
-            // Verify π_{4,G1} and π_{4,G2} (non-Groth16 proofs)
-            // These use different verification, so we verify them individually
+            // Prepare π_{4,G1} and π_{4,G2} instances (non-Groth16 proofs)
             let g_theta = if hop_index == 0 {
                 crate::types::G1::generator().into_group()
             } else {
@@ -125,8 +126,8 @@ pub fn verify_batch(
                 (prev_hop.ppk.ppk_1, prev_hop.ppk.ppk_2)
             };
 
-            // π_{4,G1}: Schnorr bridging proof
-            let _pi_4_g1_instance = SchnorrBridgingInstance {
+            // π_{4,G1}: Schnorr bridging proof - collect for batch verification
+            let pi_4_g1_instance = SchnorrBridgingInstance {
                 pk_star_blinded: hop.pk_star.0,
                 pk_r_star_blinded: hop.pk_r_star.0,
                 c11: hop.c11.0.into_group(),
@@ -137,18 +138,9 @@ pub fn verify_batch(
                 c_v2: hop.cv2.0.into_group(),
                 g_rho,
             };
+            schnorr_proofs_and_instances.push((hop.pi.pi_4_g1.clone(), pi_4_g1_instance));
 
-            if !verify_schnorr_bridging(
-                &hop.pi.pi_4_g1,
-                &_pi_4_g1_instance,
-                &params.pc_gens,
-                &params.bp_gens,
-                &params.g3_tables,
-            )? {
-                return Ok(false);
-            }
-
-            // π_{4,G2}: Public key operations proof
+            // π_{4,G2}: Public key operations proof - verify individually (different proof system)
             let pi_4_g2_instance = PublicKeyOperationsInstance {
                 pk_star: hop.pk_star.0,
                 pk_r_star: hop.pk_r_star.0,
@@ -192,6 +184,19 @@ pub fn verify_batch(
         // if !valid {
         //     return Ok(false);
         // }
+    }
+
+    // Optimization 4: Batch verify all Schnorr bridging proofs using
+    // bulletproofs batch verification (combines MSM checks)
+    if !schnorr_proofs_and_instances.is_empty()
+        && !verify_schnorr_bridging_batch(
+            &schnorr_proofs_and_instances,
+            &params.pc_gens,
+            &params.bp_gens,
+            &params.g3_tables,
+        )?
+    {
+        return Ok(false);
     }
 
     Ok(true)
