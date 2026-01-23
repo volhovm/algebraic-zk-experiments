@@ -553,18 +553,37 @@ fn test_full_protocol_concurrent() {
                 };
 
                 if messages.is_empty() {
-                    // No messages, sleep briefly and check again
+                    // No messages in our queue, check if ALL queues are empty
+                    let queue_sizes: Vec<usize> = message_queues_clone
+                        .iter()
+                        .map(|q| q.lock().unwrap().len())
+                        .collect();
+                    let all_queues_empty = queue_sizes.iter().all(|&size| size == 0);
+
+                    if all_queues_empty && verification_count > 0 {
+                        // All queues are empty AND we've processed at least one message
+                        // This means the protocol is complete
+                        println!(
+                            "  [Node {}] EXITING: all queues empty, verified {} messages",
+                            node_idx, verification_count
+                        );
+                        break;
+                    }
+
+                    // Our queue is empty but other queues have messages
+                    // Sleep and give other threads a chance to forward messages to us
                     idle_iterations += 1;
                     thread::sleep(Duration::from_millis(10));
                     total_idle_time += loop_start.elapsed();
 
-                    // Check if we should exit (no more messages anywhere)
-                    let all_empty = message_queues_clone
-                        .iter()
-                        .all(|q| q.lock().unwrap().is_empty());
-                    if all_empty && verification_count > 0 {
-                        break;
+                    // Log periodically when idle
+                    if idle_iterations % 50 == 0 {
+                        println!(
+                            "  [Node {}] Idle check #{}: my queue empty, total across all queues: {}, verified={}, forwarded={}, final={}",
+                            node_idx, idle_iterations, queue_sizes.iter().sum::<usize>(), verification_count, forwarded_count, final_messages_count
+                        );
                     }
+
                     continue;
                 }
 
@@ -611,6 +630,12 @@ fn test_full_protocol_concurrent() {
                             println!(
                                 "  [Node {}] First message reached TTL ({} hops)",
                                 node_idx, current_hops
+                            );
+                        }
+                        if final_messages_count % 10 == 0 {
+                            println!(
+                                "  [Node {}] Received {} messages at TTL so far [sid={}, pid={}]",
+                                node_idx, final_messages_count, message.sid, message.pid
                             );
                         }
                         // Don't forward, just continue to next message
@@ -711,7 +736,9 @@ fn test_full_protocol_concurrent() {
     let mut aggregate_verify_time = Duration::ZERO;
     let mut aggregate_forward_time = Duration::ZERO;
 
-    for handle in thread_handles {
+    println!("\n  Waiting for threads to join...");
+    for (idx, handle) in thread_handles.into_iter().enumerate() {
+        println!("  Waiting for Node {} to finish...", idx);
         let (
             forwarded,
             verified,
@@ -722,6 +749,7 @@ fn test_full_protocol_concurrent() {
             verify_time,
             forward_time,
         ) = handle.join().expect("Thread panicked");
+        println!("  Node {} joined successfully", idx);
         total_forwarded += forwarded;
         total_verifications += verified;
         total_final_messages += final_msgs;
@@ -730,6 +758,17 @@ fn test_full_protocol_concurrent() {
         aggregate_idle_time += idle_time;
         aggregate_verify_time += verify_time;
         aggregate_forward_time += forward_time;
+    }
+
+    println!("\n  All threads joined. Checking remaining messages in queues...");
+    for (idx, queue) in message_queues.iter().enumerate() {
+        let remaining = queue.lock().unwrap().len();
+        if remaining > 0 {
+            println!(
+                "  WARNING: Node {} has {} messages still in queue!",
+                idx, remaining
+            );
+        }
     }
 
     let elapsed = start_time.elapsed();
@@ -747,6 +786,15 @@ fn test_full_protocol_concurrent() {
         total_final_messages
     );
     println!("  Total verifications: {}", total_verifications);
+    println!(
+        "  EXPECTED: {} total messages spawned, each should reach TTL exactly once",
+        num_nodes * NUM_PACKETS_PER_USER
+    );
+    println!(
+        "  ISSUE: {} final messages received, but {} expected!",
+        total_final_messages,
+        num_nodes * NUM_PACKETS_PER_USER
+    );
 
     // Aggregate timing statistics
     println!("\n=== Aggregate CPU Time Across All Threads ===");
