@@ -980,117 +980,6 @@ where
     );
 }
 
-/// Performance comparison test between cross-circuit and same-circuit batch verification.
-/// This test generates 50 proofs from the same circuit and compares the verification time
-/// of both batch verifiers to identify potential performance regressions.
-#[allow(dead_code)]
-fn test_batch_verify_performance_comparison<E>()
-where
-    E: Pairing,
-{
-    use std::time::Instant;
-
-    let mut rng = ark_std::rand::rngs::StdRng::seed_from_u64(test_rng().next_u64());
-    const BATCH_SIZE: usize = 50;
-
-    println!("\n=== Batch Verification Performance Comparison ===");
-    println!("Batch size: {} proofs", BATCH_SIZE);
-    println!("Curve: {}\n", std::any::type_name::<E>());
-
-    // Step 1: Setup circuit once
-    let (pk, vk) = Groth16::<E>::setup(MySillyCircuit { a: None, b: None }, &mut rng).unwrap();
-    let pvk = prepare_verifying_key::<E>(&vk);
-
-    // Step 2: Generate 50 proofs with random inputs
-    println!("Generating {} proofs...", BATCH_SIZE);
-    let proof_gen_start = Instant::now();
-
-    let mut proofs = Vec::with_capacity(BATCH_SIZE);
-    let mut prepared_inputs = Vec::with_capacity(BATCH_SIZE);
-
-    for _ in 0..BATCH_SIZE {
-        let a = E::ScalarField::rand(&mut rng);
-        let b = E::ScalarField::rand(&mut rng);
-        let mut c = a;
-        c *= b;
-
-        let proof = Groth16::<E>::prove(
-            &pk,
-            MySillyCircuit {
-                a: Some(a),
-                b: Some(b),
-            },
-            &mut rng,
-        )
-        .unwrap();
-
-        let prepared_input = Groth16::<E>::prepare_inputs(&pvk, 0, &[], &[c]).unwrap();
-
-        proofs.push(proof);
-        prepared_inputs.push(prepared_input);
-    }
-
-    let proof_gen_time = proof_gen_start.elapsed();
-    println!("Proof generation took: {:?}\n", proof_gen_time);
-
-    // Step 3: Test cross-circuit verifier
-    println!("Testing cross-circuit batch verifier...");
-    let cross_circuit_input: Vec<_> = proofs
-        .iter()
-        .zip(prepared_inputs.iter())
-        .map(|(proof, input)| (proof.clone(), &pvk, *input))
-        .collect();
-
-    let cross_start = Instant::now();
-    let cross_result =
-        Groth16::<E>::batch_verify_proofs_cross_circuit(&cross_circuit_input).unwrap();
-    let cross_time = cross_start.elapsed();
-
-    assert!(
-        cross_result,
-        "Cross-circuit batch verification should succeed"
-    );
-    println!("  Result: SUCCESS");
-    println!("  Time: {:?}", cross_time);
-
-    // Step 4: Test same-circuit verifier
-    println!("\nTesting same-circuit batch verifier...");
-    let same_circuit_input: Vec<_> = proofs
-        .iter()
-        .zip(prepared_inputs.iter())
-        .map(|(proof, input)| (proof.clone(), *input))
-        .collect();
-
-    let same_start = Instant::now();
-    let same_result =
-        Groth16::<E>::batch_verify_proofs_with_prepared_inputs(&pvk, &same_circuit_input).unwrap();
-    let same_time = same_start.elapsed();
-
-    assert!(
-        same_result,
-        "Same-circuit batch verification should succeed"
-    );
-    println!("  Result: SUCCESS");
-    println!("  Time: {:?}", same_time);
-
-    // Step 5: Output comparison
-    println!("\n=== Results ===");
-    println!("Cross-circuit verifier: {:?}", cross_time);
-    println!("Same-circuit verifier:  {:?}", same_time);
-
-    let speedup = cross_time.as_secs_f64() / same_time.as_secs_f64();
-    println!("\nSpeedup (cross/same): {:.2}x", speedup);
-
-    if speedup > 1.0 {
-        println!(
-            "⚠️  Cross-circuit verifier is {:.2}x SLOWER when used with same-circuit proofs",
-            speedup
-        );
-    } else {
-        println!("✓ Cross-circuit verifier performs comparably to same-circuit verifier");
-    }
-}
-
 mod bls12_377 {
     use super::{
         test_batch_verify_cross_circuit_empty, test_batch_verify_cross_circuit_many,
@@ -1211,9 +1100,8 @@ mod bn_254 {
         test_batch_verify_cross_circuit_empty, test_batch_verify_cross_circuit_many,
         test_batch_verify_cross_circuit_one_invalid, test_batch_verify_cross_circuit_single,
         test_batch_verify_cross_circuit_valid, test_batch_verify_empty, test_batch_verify_many,
-        test_batch_verify_one_invalid, test_batch_verify_performance_comparison,
-        test_batch_verify_single, test_batch_verify_valid, test_link16, test_link16_extra,
-        test_prove_and_verify,
+        test_batch_verify_one_invalid, test_batch_verify_single, test_batch_verify_valid,
+        test_link16, test_link16_extra, test_prove_and_verify,
     };
     use ark_bn254::Bn254;
 
@@ -1276,11 +1164,5 @@ mod bn_254 {
     #[test]
     fn batch_verify_cross_circuit_many() {
         test_batch_verify_cross_circuit_many::<Bn254>();
-    }
-
-    #[test]
-    #[ignore]
-    fn batch_verify_performance_comparison() {
-        test_batch_verify_performance_comparison::<Bn254>();
     }
 }
