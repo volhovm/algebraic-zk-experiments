@@ -514,13 +514,8 @@ impl<T: BorrowMut<Transcript>, C: AffineRepr> Verifier<T, C> {
 
         let transcript = self.transcript.borrow_mut();
 
-        // If the number of multiplications is not 0 or a power of 2, then pad the circuit.
-
+        // Linear proof implementation doesn't require power-of-2 padding
         let n2 = n - n1;
-        let padded_n = n.next_power_of_two();
-        let pad = padded_n - n;
-
-        // println!("padded_n = {}", padded_n);
 
         use crate::proving::bulletproofs::inner_product_proof::inner_product;
         use crate::proving::bulletproofs::util;
@@ -582,7 +577,7 @@ impl<T: BorrowMut<Transcript>, C: AffineRepr> Verifier<T, C> {
         let r_vec = &proof.r_vec;
 
         // Verify that the vectors have the correct length
-        if l_vec.len() != padded_n || r_vec.len() != padded_n {
+        if l_vec.len() != n || r_vec.len() != n {
             return Err(R1CSError::VerificationError);
         }
 
@@ -591,23 +586,19 @@ impl<T: BorrowMut<Transcript>, C: AffineRepr> Verifier<T, C> {
 
         let y_inv = y.inverse().unwrap();
         let y_inv_vec = util::exp_iter(y_inv)
-            .take(padded_n)
+            .take(n)
             .collect::<Vec<C::ScalarField>>();
 
         let yneg_wR = wR
             .into_iter()
             .zip(y_inv_vec.iter())
             .map(|(wRi, exp_y_inv)| wRi * exp_y_inv)
-            .chain(std::iter::repeat_n(
-                C::ScalarField::zero(),
-                padded_n - self.num_vars,
-            ))
             .collect::<Vec<C::ScalarField>>();
 
         let delta = inner_product(&yneg_wR[0..self.num_vars], &wL);
 
         let u_for_g =
-            std::iter::repeat_n(C::ScalarField::one(), n1).chain(std::iter::repeat_n(u, n2 + pad));
+            std::iter::repeat_n(C::ScalarField::one(), n1).chain(std::iter::repeat_n(u, n2));
 
         let mut u_for_h = u_for_g.clone();
 
@@ -622,13 +613,13 @@ impl<T: BorrowMut<Transcript>, C: AffineRepr> Verifier<T, C> {
             .map(|((yneg_wRi, u_or_1), l_i)| u_or_1 * (xwR * yneg_wRi - l_i));
 
         // r(x)
-        let mut h_scalars = Vec::with_capacity(padded_n);
+        let mut h_scalars = Vec::with_capacity(n);
         {
             let mut wL = wL.into_iter();
             let mut wO = wO.into_iter();
             let mut y_inv_vec = y_inv_vec.into_iter();
 
-            for (i, r_i) in r_vec.iter().enumerate().take(padded_n) {
+            for (i, r_i) in r_vec.iter().enumerate().take(n) {
                 let y_inv = y_inv_vec.next().unwrap();
                 let u_or_1 = u_for_h.next().unwrap();
 

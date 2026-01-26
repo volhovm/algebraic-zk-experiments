@@ -679,15 +679,11 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
         // Process the remaining constraints.
         self = self.create_randomized_constraints()?;
 
-        // Pad zeros to the next power of two (or do that implicitly when creating vectors)
-
-        // If the number of multiplications is not 0 or a power of 2, then pad the circuit.
+        // Linear proof implementation doesn't require power-of-2 padding
         let n = self.size();
         let n2 = n - n1;
-        let padded_n = n.next_power_of_two();
-        let pad = padded_n - n;
 
-        if bp_gens.gens_capacity < padded_n {
+        if bp_gens.gens_capacity < n {
             return Err(R1CSError::InvalidGeneratorsLength);
         }
 
@@ -805,8 +801,8 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
 
         let y_inv = y.inverse().unwrap();
 
-        let exp_y_inv = util::exp_iter(y_inv).take(padded_n).collect::<Vec<_>>();
-        let exp_y = util::exp_iter(y).take(padded_n).collect::<Vec<_>>();
+        let exp_y_inv = util::exp_iter(y_inv).take(n).collect::<Vec<_>>();
+        let exp_y = util::exp_iter(y).take(n).collect::<Vec<_>>();
 
         //
         let sLsR = s_L1
@@ -1009,17 +1005,8 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
         let t_x = t_poly.eval(x);
         let t_x_blinding = t_blinding_poly.eval(x);
 
-        // The constant term of l is zero, hence l_vec is zero beyond n
-        let mut l_vec = l_poly.eval(x);
-        l_vec.append(&mut vec![C::ScalarField::zero(); pad]);
-
-        // XXX this should refer to the notes to explain why this is correct
-        // This is the constant term of r(x) beyond w_O since it is zero after n.
-        let mut r_vec = r_poly.eval(x);
-        r_vec.append(&mut vec![C::ScalarField::zero(); pad]);
-        for i in n..padded_n {
-            r_vec[i] = -exp_y[i];
-        }
+        let l_vec = l_poly.eval(x);
+        let r_vec = r_poly.eval(x);
 
         // sanity check
         #[cfg(debug_assertions)]
@@ -1028,14 +1015,13 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
 
             let y_inv = y.inverse().unwrap();
             let y_inv_vec = util::exp_iter(y_inv)
-                .take(padded_n)
+                .take(n)
                 .collect::<Vec<C::ScalarField>>();
 
             let yneg_wR = wR
                 .iter()
                 .zip(y_inv_vec.iter())
                 .map(|(wRi, exp_y_inv)| (*wRi) * exp_y_inv)
-                .chain(std::iter::repeat_n(C::ScalarField::zero(), padded_n - n))
                 .collect::<Vec<C::ScalarField>>();
 
             let delta = inner_product(&yneg_wR[0..n], &wL);
