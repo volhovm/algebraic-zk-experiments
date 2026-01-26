@@ -584,129 +584,90 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
 
         #[cfg(feature = "parallel")]
         let (A_I1, A_O1, S1) = {
-            // todo clean up when send is safely implemented
-            let blinding = self.pc_gens.B_blinding;
-            let A_I1_scalars = iter::once(&i_blinding1)
-                .chain(self.secrets.a_L.iter())
-                .chain(self.secrets.a_R.iter())
-                .copied()
-                .collect::<Vec<C::ScalarField>>();
-            let A_O1_scalars = iter::once(&o_blinding1)
-                .chain(self.secrets.a_O.iter())
-                .copied()
-                .collect::<Vec<C::ScalarField>>();
+            // Pre-allocate and build generator vectors
+            let mut a_i_generators = Vec::with_capacity(2 * n1 + 1);
+            a_i_generators.push(self.pc_gens.B_blinding);
+            a_i_generators.extend(gens.G(n1).copied());
+            a_i_generators.extend(gens.H(n1).copied());
+
+            let mut a_o_generators = Vec::with_capacity(n1 + 1);
+            a_o_generators.push(self.pc_gens.B_blinding);
+            a_o_generators.extend(gens.G(n1).copied());
+
+            let mut s1_generators = Vec::with_capacity(2 * n1 + 1);
+            s1_generators.push(self.pc_gens.B_blinding);
+            s1_generators.extend(gens.G(n1).copied());
+            s1_generators.extend(gens.H(n1).copied());
+
+            // Pre-allocate and build scalar vectors
+            let mut a_i1_scalars = Vec::with_capacity(2 * n1 + 1);
+            a_i1_scalars.push(i_blinding1);
+            a_i1_scalars.extend(self.secrets.a_L.iter().copied());
+            a_i1_scalars.extend(self.secrets.a_R.iter().copied());
+
+            let mut a_o1_scalars = Vec::with_capacity(n1 + 1);
+            a_o1_scalars.push(o_blinding1);
+            a_o1_scalars.extend(self.secrets.a_O.iter().copied());
+
+            let mut s1_scalars = Vec::with_capacity(2 * n1 + 1);
+            s1_scalars.push(s_blinding1);
+            s1_scalars.extend(s_L1.iter().copied());
+            s1_scalars.extend(s_R1.iter().copied());
+
+            // Spawn parallel MSM computations with pre-built slices
             let (mut A_I1, mut A_O1, mut S1) = (None, None, None);
             rayon::scope(|s| {
                 // A_I = <a_L, G> + <a_R, H> + i_blinding * B_blinding
                 s.spawn(|_| {
-                    A_I1 = Some(
-                        C::Group::msm_unchecked(
-                            iter::once(&blinding)
-                                .chain(gens.G(n1))
-                                .chain(gens.H(n1))
-                                .copied()
-                                .collect::<Vec<C>>()
-                                .as_slice(),
-                            A_I1_scalars.as_slice(),
-                        )
-                        .into(),
-                    )
+                    A_I1 = Some(C::Group::msm_unchecked(&a_i_generators, &a_i1_scalars).into())
                 });
                 // A_O = <a_O, G> + o_blinding * B_blinding
                 s.spawn(|_| {
-                    A_O1 = Some(
-                        C::Group::msm_unchecked(
-                            iter::once(&blinding)
-                                .chain(gens.G(n1))
-                                .copied()
-                                .collect::<Vec<C>>()
-                                .as_slice(),
-                            A_O1_scalars.as_slice(),
-                        )
-                        .into(),
-                    )
+                    A_O1 = Some(C::Group::msm_unchecked(&a_o_generators, &a_o1_scalars).into())
                 });
-
-                // Vector commitments of the form
-                // <Vi, G> + vi_blinding * B:blinding
-
                 // S = <s_L, G> + <s_R, H> + s_blinding * B_blinding
-                s.spawn(|_| {
-                    S1 = Some(
-                        C::Group::msm_unchecked(
-                            iter::once(&blinding)
-                                .chain(gens.G(n1))
-                                .chain(gens.H(n1))
-                                .copied()
-                                .collect::<Vec<C>>()
-                                .as_slice(),
-                            iter::once(&s_blinding1)
-                                .chain(s_L1.iter())
-                                .chain(s_R1.iter())
-                                .copied()
-                                .collect::<Vec<C::ScalarField>>()
-                                .as_slice(),
-                        )
-                        .into(),
-                    )
-                });
+                s.spawn(|_| S1 = Some(C::Group::msm_unchecked(&s1_generators, &s1_scalars).into()));
             });
 
             (A_I1.unwrap(), A_O1.unwrap(), S1.unwrap())
         };
         #[cfg(not(feature = "parallel"))]
         let (A_I1, A_O1, S1) = {
-            // A_I = <a_L, G> + <a_R, H> + i_blinding * B_blinding
-            let A_I1 = C::Group::msm_unchecked(
-                iter::once(&self.pc_gens.B_blinding)
-                    .chain(gens.G(n1))
-                    .chain(gens.H(n1))
-                    .copied()
-                    .collect::<Vec<C>>()
-                    .as_slice(),
-                iter::once(&i_blinding1)
-                    .chain(self.secrets.a_L.iter())
-                    .chain(self.secrets.a_R.iter())
-                    .map(|s| (*s).into())
-                    .collect::<Vec<C::ScalarField>>()
-                    .as_slice(),
-            )
-            .into();
+            // Pre-allocate and build generator vectors
+            let mut a_i_generators = Vec::with_capacity(2 * n1 + 1);
+            a_i_generators.push(self.pc_gens.B_blinding);
+            a_i_generators.extend(gens.G(n1).copied());
+            a_i_generators.extend(gens.H(n1).copied());
 
-            // A_O = <a_O, G> + o_blinding * B_blinding
-            let A_O1 = C::Group::msm_unchecked(
-                iter::once(&self.pc_gens.B_blinding)
-                    .chain(gens.G(n1))
-                    .copied()
-                    .collect::<Vec<C>>()
-                    .as_slice(),
-                iter::once(&o_blinding1)
-                    .chain(self.secrets.a_O.iter())
-                    .map(|s| (*s).into())
-                    .collect::<Vec<C::ScalarField>>()
-                    .as_slice(),
-            )
-            .into();
+            let mut a_o_generators = Vec::with_capacity(n1 + 1);
+            a_o_generators.push(self.pc_gens.B_blinding);
+            a_o_generators.extend(gens.G(n1).copied());
 
-            // Vector commitments of the form
-            // <Vi, G> + vi_blinding * B:blinding
+            let mut s1_generators = Vec::with_capacity(2 * n1 + 1);
+            s1_generators.push(self.pc_gens.B_blinding);
+            s1_generators.extend(gens.G(n1).copied());
+            s1_generators.extend(gens.H(n1).copied());
 
-            // S = <s_L, G> + <s_R, H> + s_blinding * B_blinding
-            let S1 = C::Group::msm_unchecked(
-                iter::once(&self.pc_gens.B_blinding)
-                    .chain(gens.G(n1))
-                    .chain(gens.H(n1))
-                    .copied()
-                    .collect::<Vec<C>>()
-                    .as_slice(),
-                iter::once(&s_blinding1)
-                    .chain(s_L1.iter())
-                    .chain(s_R1.iter())
-                    .map(|s| (*s).into())
-                    .collect::<Vec<C::ScalarField>>()
-                    .as_slice(),
-            )
-            .into();
+            // Pre-allocate and build scalar vectors
+            let mut a_i1_scalars = Vec::with_capacity(2 * n1 + 1);
+            a_i1_scalars.push(i_blinding1);
+            a_i1_scalars.extend(self.secrets.a_L.iter().copied());
+            a_i1_scalars.extend(self.secrets.a_R.iter().copied());
+
+            let mut a_o1_scalars = Vec::with_capacity(n1 + 1);
+            a_o1_scalars.push(o_blinding1);
+            a_o1_scalars.extend(self.secrets.a_O.iter().copied());
+
+            let mut s1_scalars = Vec::with_capacity(2 * n1 + 1);
+            s1_scalars.push(s_blinding1);
+            s1_scalars.extend(s_L1.iter().copied());
+            s1_scalars.extend(s_R1.iter().copied());
+
+            // Compute MSMs sequentially
+            let A_I1 = C::Group::msm_unchecked(&a_i_generators, &a_i1_scalars).into();
+            let A_O1 = C::Group::msm_unchecked(&a_o_generators, &a_o1_scalars).into();
+            let S1 = C::Group::msm_unchecked(&s1_generators, &s1_scalars).into();
+
             (A_I1, A_O1, S1)
         };
 
