@@ -94,6 +94,10 @@ harness = false
 name = "forward_bench"
 harness = false
 
+[[bench]]
+name = "forward_simple_bench"
+harness = false
+
 [patch.crates-io]
 ark-relations = { git = "https://github.com/arkworks-rs/snark.git" }
 ark-ff = { git = "https://github.com/arkworks-rs/algebra.git" }
