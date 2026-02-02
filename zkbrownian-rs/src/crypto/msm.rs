@@ -153,21 +153,36 @@ impl<G: CurveGroup> FixedBaseMsmTable<G> {
         let scalar_bits = G::ScalarField::MODULUS_BIT_SIZE as usize;
         let num_windows = scalar_bits.div_ceil(self.window_bits);
 
-        // Start with the contribution from the most significant window
-        let mut result = self.compute_window_contribution(scalars, num_windows - 1);
+        use rayon::prelude::*;
 
-        // Process remaining windows from MSB-1 down to LSB
-        // For each window: multiply accumulated result by 2^window_bits, then add contribution
+        let window_contributions: Vec<G> = (0..num_windows)
+            .into_par_iter()
+            .map(|w| self.compute_window_contribution(scalars, w))
+            .collect();
+
+        let mut result = window_contributions[num_windows - 1];
         for window_idx in (0..num_windows - 1).rev() {
-            // Shift accumulated result by window_bits (multiply by 2^window_bits)
             for _ in 0..self.window_bits {
                 result.double_in_place();
             }
-
-            // Add contribution from this window
-            let window_contribution = self.compute_window_contribution(scalars, window_idx);
-            result += window_contribution;
+            result += window_contributions[window_idx];
         }
+
+        //// Start with the contribution from the most significant window
+        //let mut result = self.compute_window_contribution(scalars, num_windows - 1);
+
+        //// Process remaining windows from MSB-1 down to LSB
+        //// For each window: multiply accumulated result by 2^window_bits, then add contribution
+        //for window_idx in (0..num_windows - 1).rev() {
+        //    // Shift accumulated result by window_bits (multiply by 2^window_bits)
+        //    for _ in 0..self.window_bits {
+        //        result.double_in_place();
+        //    }
+
+        //    // Add contribution from this window
+        //    let window_contribution = self.compute_window_contribution(scalars, window_idx);
+        //    result += window_contribution;
+        //}
 
         result
     }
