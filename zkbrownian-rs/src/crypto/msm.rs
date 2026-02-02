@@ -160,7 +160,11 @@ impl<G: CurveGroup> FixedBaseMsmTable<G> {
             .map(|w| self.compute_window_contribution(scalars, w))
             .collect();
 
+        // Start with the contribution from the most significant window
         let mut result = window_contributions[num_windows - 1];
+
+        // Process remaining windows from MSB-1 down to LSB
+        // For each window: multiply accumulated result by 2^window_bits, then add contribution
         for window_idx in (0..num_windows - 1).rev() {
             for _ in 0..self.window_bits {
                 result.double_in_place();
@@ -168,117 +172,38 @@ impl<G: CurveGroup> FixedBaseMsmTable<G> {
             result += window_contributions[window_idx];
         }
 
-        //// Start with the contribution from the most significant window
-        //let mut result = self.compute_window_contribution(scalars, num_windows - 1);
-
-        //// Process remaining windows from MSB-1 down to LSB
-        //// For each window: multiply accumulated result by 2^window_bits, then add contribution
-        //for window_idx in (0..num_windows - 1).rev() {
-        //    // Shift accumulated result by window_bits (multiply by 2^window_bits)
-        //    for _ in 0..self.window_bits {
-        //        result.double_in_place();
-        //    }
-
-        //    // Add contribution from this window
-        //    let window_contribution = self.compute_window_contribution(scalars, window_idx);
-        //    result += window_contribution;
-        //}
-
         result
     }
 
-    /// Compute many MSMs using the precomputed table (batch processing)
-    ///
-    /// This computes multiple MSMs with the same fixed bases but different scalar vectors:
-    /// - Result[j] = ∑ᵢ scalar_batch[j][i] * bases[i]
-    ///
-    /// This is the main use case for fixed-base MSM: computing hundreds of MSMs
-    /// with the same base points but different scalars (e.g., in ZK proof generation).
-    ///
-    /// # Arguments
-    ///
-    /// * `scalar_batch` - A slice of scalar vectors, where each vector corresponds to one MSM
-    ///
-    /// # Panics
-    ///
-    /// Panics if any scalar vector has length != number of bases in table
-    ///
-    /// # Complexity
-    ///
-    /// - Time: O(batch_size × (n × λ/w + 2^w × λ/w))
-    /// - Space: O(batch_size) for results + O(2^w) for temporary buckets
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// // Compute 100 MSMs with the same bases
-    /// let scalar_batch: Vec<Vec<Fr>> = (0..100)
-    ///     .map(|_| (0..n).map(|_| Fr::rand(&mut rng)).collect())
-    ///     .collect();
-    ///
-    /// let results = table.msm_batch(&scalar_batch);
-    /// assert_eq!(results.len(), 100);
-    /// ```
-    pub fn msm_batch(&self, scalar_batch: &[Vec<G::ScalarField>]) -> Vec<G> {
-        // Validate input
-        for (i, scalars) in scalar_batch.iter().enumerate() {
-            assert_eq!(
-                scalars.len(),
-                self.table.len(),
-                "Scalar vector {} has length {} but table has {} bases",
-                i,
-                scalars.len(),
-                self.table.len()
-            );
-        }
-
-        // CLAUDETODO
-        // Process each MSM independently
-        scalar_batch
+    pub fn msm_batch(&self, all_scalars: &[Vec<G::ScalarField>]) -> Vec<G> {
+        all_scalars
             .iter()
             .map(|scalars| self.msm(scalars))
             .collect()
     }
 
-    /// Compute contribution from a single window using bucket aggregation
+    /// Compute contribution from a single window using direct accumulation
     ///
     /// For each window, we compute: ∑ᵢ digit_i * base_i
     /// where digit_i is the w-bit window of scalar_i at position window_idx.
     ///
-    /// We use the bucket method:
-    /// 1. Group bases by their digit value into buckets
-    /// 2. Aggregate buckets efficiently: ∑_{d=1}^{2^w-1} d · bucket[d]
+    /// We use direct table lookup: table[i][digit] contains digit * base_i,
+    /// so we simply sum these precomputed values.
     ///
     /// Note: This returns the unscaled contribution. The caller is responsible
     /// for scaling by 2^(window_idx * w) via doubling in the main loop.
     fn compute_window_contribution(&self, scalars: &[G::ScalarField], window_idx: usize) -> G {
-        let bucket_count = 1 << self.window_bits; // 2^window_bits
-        let mut buckets: Vec<G> = vec![G::zero(); bucket_count];
+        let mut window_result = G::zero();
 
-        // Extract window bits from each scalar and accumulate into buckets
-        // bucket[d] will contain the sum of all base_i where digit_i = d
         for (i, scalar) in scalars.iter().enumerate() {
             let digit =
                 extract_window_bits(scalar, window_idx * self.window_bits, self.window_bits);
 
             if digit > 0 {
-                // Add base_i (NOT digit * base_i) to bucket[digit]
-                // table[i][1] contains base_i
+                // Use precomputed table: table[i][digit] = digit * base_i
                 // This is a mixed addition (affine + projective)
-                buckets[digit as usize] += self.table[i][1];
+                window_result += self.table[i][digit as usize];
             }
-        }
-
-        // Aggregate buckets efficiently: ∑_{d=1}^{2^w-1} d · bucket[d]
-        // Use the running sum trick to compute this in O(2^w) additions:
-        // running_sum = bucket[2^w-1] + bucket[2^w-2] + ... + bucket[1]
-        // result = bucket[2^w-1] + (bucket[2^w-1] + bucket[2^w-2]) + ... + (bucket[2^w-1] + ... + bucket[1])
-        let mut running_sum = G::zero();
-        let mut window_result = G::zero();
-
-        for d in (1..bucket_count).rev() {
-            running_sum += buckets[d];
-            window_result += running_sum;
         }
 
         window_result
@@ -585,7 +510,8 @@ mod tests {
         let bases: Vec<G1Projective> = (0..16).map(|_| G1Projective::rand(&mut rng)).collect();
 
         let table = FixedBaseMsmTable::new(&bases, 8);
-        let results = table.msm_batch(&[]);
+        let empty: Vec<Vec<Fr>> = vec![];
+        let results = table.msm_batch(&empty);
 
         assert_eq!(results.len(), 0);
     }
@@ -635,12 +561,12 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Scalar vector 1 has length")]
+    #[should_panic(expected = "Number of scalars must match number of bases")]
     fn test_msm_batch_mismatched_lengths() {
         let mut rng = thread_rng();
 
         let bases: Vec<G1Projective> = (0..10).map(|_| G1Projective::rand(&mut rng)).collect();
-        let scalar_batch = vec![
+        let scalar_batch: Vec<Vec<Fr>> = vec![
             (0..10).map(|_| Fr::rand(&mut rng)).collect(),
             (0..5).map(|_| Fr::rand(&mut rng)).collect(), // Wrong length at index 1
         ];
