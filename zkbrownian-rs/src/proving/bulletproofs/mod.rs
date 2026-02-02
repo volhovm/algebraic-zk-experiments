@@ -9,7 +9,7 @@ mod transcript;
 
 pub use crate::proving::bulletproofs::errors::ProofError;
 pub use crate::proving::bulletproofs::generators::{
-    BulletproofGens, BulletproofGensShare, PedersenGens,
+    BatchProvingTables, BulletproofGens, BulletproofGensShare, PedersenGens,
 };
 pub use crate::proving::bulletproofs::util::affine_from_bytes_tai;
 

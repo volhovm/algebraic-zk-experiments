@@ -293,6 +293,112 @@ impl<'a, C: AffineRepr> BulletproofGensShare<'a, C> {
     }
 }
 
+/// Precomputed MSM tables for batch proving Schnorr bridging proofs
+///
+/// Stores precomputed tables for all 6 commitment types used in R1CS proving.
+/// This allows batch processing of N proofs by computing 6 batch MSMs instead
+/// of N×6 individual MSMs, providing 3-5× speedup for large batches.
+///
+/// # Memory Usage
+///
+/// With n≈2500 multipliers and window_bits=8:
+/// - Each table: ~40MB (2500 bases × 256 entries × 64 bytes)
+/// - Total: ~240MB for all 6 tables
+#[derive(Clone, Debug)]
+pub struct BatchProvingTables<C: AffineRepr> {
+    /// Phase 1 commitment table for A_I1 (size: 2*n1+1)
+    pub a_i1_table: crate::crypto::msm::FixedBaseMsmTable<C::Group>,
+    /// Phase 1 commitment table for A_O1 (size: n1+1)
+    pub a_o1_table: crate::crypto::msm::FixedBaseMsmTable<C::Group>,
+    /// Phase 1 commitment table for S1 (size: 2*n1+1)
+    pub s1_table: crate::crypto::msm::FixedBaseMsmTable<C::Group>,
+
+    /// Phase 2 commitment table for A_I2 (size: 2*n2+1)
+    pub a_i2_table: crate::crypto::msm::FixedBaseMsmTable<C::Group>,
+    /// Phase 2 commitment table for A_O2 (size: n2+1)
+    pub a_o2_table: crate::crypto::msm::FixedBaseMsmTable<C::Group>,
+    /// Phase 2 commitment table for S2 (size: 2*n2+1)
+    pub s2_table: crate::crypto::msm::FixedBaseMsmTable<C::Group>,
+
+    /// First phase constraint count
+    pub n1: usize,
+    /// Second phase constraint count (n - n1)
+    pub n2: usize,
+}
+
+impl<C: AffineRepr> BatchProvingTables<C> {
+    /// Create new batch proving tables with precomputed MSM tables
+    ///
+    /// # Arguments
+    ///
+    /// * `pc_gens` - Pedersen commitment generators
+    /// * `bp_gens` - Bulletproof generators
+    /// * `n1` - First phase constraint count
+    /// * `n2` - Second phase constraint count (n - n1)
+    /// * `window_bits` - Window size for MSM precomputation (recommended: 8)
+    ///
+    /// # Returns
+    ///
+    /// Initialized BatchProvingTables with all 6 precomputed tables
+    pub fn new(
+        pc_gens: &PedersenGens<C>,
+        bp_gens: &BulletproofGens<C>,
+        n1: usize,
+        n2: usize,
+        window_bits: usize,
+    ) -> Self {
+        let gens = bp_gens.share(0);
+        let n = n1 + n2;
+
+        // Build generator vectors for each table
+
+        // Phase 1 tables
+        let mut a_i1_bases = Vec::with_capacity(2 * n1 + 1);
+        a_i1_bases.push(pc_gens.B_blinding.into());
+        a_i1_bases.extend(gens.G(n1).map(|g| (*g).into()));
+        a_i1_bases.extend(gens.H(n1).map(|g| (*g).into()));
+
+        let mut a_o1_bases = Vec::with_capacity(n1 + 1);
+        a_o1_bases.push(pc_gens.B_blinding.into());
+        a_o1_bases.extend(gens.G(n1).map(|g| (*g).into()));
+
+        let s1_bases = a_i1_bases.clone(); // Same as A_I1
+
+        // Phase 2 tables (use skip to get G[n1..n], H[n1..n])
+        let mut a_i2_bases = Vec::with_capacity(2 * n2 + 1);
+        a_i2_bases.push(pc_gens.B_blinding.into());
+        a_i2_bases.extend(gens.G(n).skip(n1).map(|g| (*g).into()));
+        a_i2_bases.extend(gens.H(n).skip(n1).map(|g| (*g).into()));
+
+        let mut a_o2_bases = Vec::with_capacity(n2 + 1);
+        a_o2_bases.push(pc_gens.B_blinding.into());
+        a_o2_bases.extend(gens.G(n).skip(n1).map(|g| (*g).into()));
+
+        let s2_bases = a_i2_bases.clone();
+
+        Self {
+            a_i1_table: crate::crypto::msm::FixedBaseMsmTable::new(&a_i1_bases, window_bits),
+            a_o1_table: crate::crypto::msm::FixedBaseMsmTable::new(&a_o1_bases, window_bits),
+            s1_table: crate::crypto::msm::FixedBaseMsmTable::new(&s1_bases, window_bits),
+            a_i2_table: crate::crypto::msm::FixedBaseMsmTable::new(&a_i2_bases, window_bits),
+            a_o2_table: crate::crypto::msm::FixedBaseMsmTable::new(&a_o2_bases, window_bits),
+            s2_table: crate::crypto::msm::FixedBaseMsmTable::new(&s2_bases, window_bits),
+            n1,
+            n2,
+        }
+    }
+
+    /// Get total memory usage estimate in bytes
+    pub fn memory_usage_estimate(&self) -> usize {
+        self.a_i1_table.memory_usage_estimate()
+            + self.a_o1_table.memory_usage_estimate()
+            + self.s1_table.memory_usage_estimate()
+            + self.a_i2_table.memory_usage_estimate()
+            + self.a_o2_table.memory_usage_estimate()
+            + self.s2_table.memory_usage_estimate()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

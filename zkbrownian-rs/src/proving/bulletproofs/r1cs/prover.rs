@@ -68,6 +68,60 @@ pub struct Secrets<F: Field> {
     pub vec_open: Vec<(F, Vec<F>)>,
 }
 
+/// Scalars collected from one prover instance for batch MSM
+///
+/// Contains all scalar vectors needed to compute the 6 commitments
+/// (A_I1, A_O1, S1, A_I2, A_O2, S2) for one proof.
+#[derive(Clone, Debug)]
+pub struct ProverScalars<F: Field> {
+    /// Phase 1 A_I1 scalars: [i_blinding1, a_L[0..n1], a_R[0..n1]]
+    pub a_i1: Vec<F>,
+    /// Phase 1 A_O1 scalars: [o_blinding1, a_O[0..n1]]
+    pub a_o1: Vec<F>,
+    /// Phase 1 S1 scalars: [s_blinding1, s_L1[..], s_R1[..]]
+    pub s1: Vec<F>,
+
+    /// Phase 2 A_I2 scalars: [i_blinding2, a_L[n1..], a_R[n1..]]
+    pub a_i2: Vec<F>,
+    /// Phase 2 A_O2 scalars: [o_blinding2, a_O[n1..]]
+    pub a_o2: Vec<F>,
+    /// Phase 2 S2 scalars: [s_blinding2, s_L2[..], s_R2[..]]
+    pub s2: Vec<F>,
+}
+
+/// State after scalar collection, before MSM computation
+///
+/// Holds all data needed to complete the proof after commitments are computed.
+pub struct ProverPreMsm<C: AffineRepr, T: BorrowMut<Transcript>> {
+    /// Transcript for Fiat-Shamir
+    pub transcript: T,
+    /// Secret witness data
+    pub secrets: Secrets<C::ScalarField>,
+    /// Constraint system
+    pub constraints: Vec<LinearCombination<C::ScalarField>>,
+    /// First phase constraint count
+    pub n1: usize,
+    /// Second phase constraint count
+    pub n2: usize,
+    /// Pedersen commitment generators
+    pub pc_gens: PedersenGens<C>,
+    /// Blinding factors and randomness for completing the proof
+    pub i_blinding1: C::ScalarField,
+    pub o_blinding1: C::ScalarField,
+    pub s_blinding1: C::ScalarField,
+    pub i_blinding2: C::ScalarField,
+    pub o_blinding2: C::ScalarField,
+    pub s_blinding2: C::ScalarField,
+    pub s_L1: Zeroizing<Vec<C::ScalarField>>,
+    pub s_R1: Zeroizing<Vec<C::ScalarField>>,
+    pub s_L2: Zeroizing<Vec<C::ScalarField>>,
+    pub s_R2: Zeroizing<Vec<C::ScalarField>>,
+    /// Number of vector commitments
+    pub ncomm: usize,
+    /// Op degree
+    pub op_degree: usize,
+}
+
 /// Prover in the randomizing phase.
 ///
 /// Note: this type is exported because it is used to specify the associated type
@@ -479,6 +533,152 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
             }
             Ok(wrapped_self.prover)
         }
+    }
+
+    /// Collect scalars needed for MSMs without computing them
+    ///
+    /// This extracts all scalar vectors needed for the 6 MSM operations
+    /// (A_I1, A_O1, S1, A_I2, A_O2, S2) without actually computing the commitments.
+    /// Used for batch proving where multiple proofs share the same generator bases.
+    ///
+    /// # Returns
+    ///
+    /// Returns (ProverPreMsm, ProverScalars) tuple containing:
+    /// - ProverPreMsm: State needed to complete proof after MSMs
+    /// - ProverScalars: Scalar vectors for each of the 6 MSM operations
+    pub fn collect_scalars(
+        mut self,
+        bp_gens: &BulletproofGens<C>,
+    ) -> Result<(ProverPreMsm<C, T>, ProverScalars<C::ScalarField>), R1CSError> {
+        // Pad constraints (same as prove_and_return_transcript line 508)
+        while self.size() > self.secrets.a_L.len() {
+            self.allocate_multiplier(Some((C::ScalarField::zero(), C::ScalarField::zero())))?;
+        }
+
+        // number of commitments
+        let ncomm = self.secrets.vec_open.len();
+
+        // op_degree = 2 + 2 * floor(#comm / 2)
+        let op_degree = 2 + 2 * (ncomm / 2);
+
+        // Append m (num commitments) to transcript
+        self.transcript
+            .borrow_mut()
+            .append_u64(b"m", self.secrets.v.len() as u64);
+
+        let n1 = self.size();
+        if bp_gens.gens_capacity < n1 {
+            return Err(R1CSError::InvalidGeneratorsLength);
+        }
+
+        // Generate random blindings (same as line 576-583)
+        let mut rng = rand::thread_rng();
+        let i_blinding1 = C::ScalarField::rand(&mut rng);
+        let o_blinding1 = C::ScalarField::rand(&mut rng);
+        let s_blinding1 = C::ScalarField::rand(&mut rng);
+        let s_L1: Zeroizing<Vec<C::ScalarField>> =
+            Zeroizing::new((0..n1).map(|_| C::ScalarField::rand(&mut rng)).collect());
+        let s_R1: Zeroizing<Vec<C::ScalarField>> =
+            Zeroizing::new((0..n1).map(|_| C::ScalarField::rand(&mut rng)).collect());
+
+        // Collect phase 1 scalars (instead of computing MSMs at line 621-629)
+        let mut a_i1_scalars = Vec::with_capacity(2 * n1 + 1);
+        a_i1_scalars.push(i_blinding1);
+        a_i1_scalars.extend(self.secrets.a_L.iter().copied());
+        a_i1_scalars.extend(self.secrets.a_R.iter().copied());
+
+        let mut a_o1_scalars = Vec::with_capacity(n1 + 1);
+        a_o1_scalars.push(o_blinding1);
+        a_o1_scalars.extend(self.secrets.a_O.iter().copied());
+
+        let mut s1_scalars = Vec::with_capacity(2 * n1 + 1);
+        s1_scalars.push(s_blinding1);
+        s1_scalars.extend(s_L1.iter().copied());
+        s1_scalars.extend(s_R1.iter().copied());
+
+        // Create randomized constraints (same as line 680)
+        let pc_gens_copy = self.pc_gens.clone();
+        self = self.create_randomized_constraints()?;
+
+        let n = self.size();
+        let n2 = n - n1;
+
+        if bp_gens.gens_capacity < n {
+            return Err(R1CSError::InvalidGeneratorsLength);
+        }
+
+        // Generate phase 2 blindings
+        let has_2nd_phase = n2 > 0;
+        let (i_blinding2, o_blinding2, s_blinding2) = if has_2nd_phase {
+            (
+                C::ScalarField::rand(&mut rng),
+                C::ScalarField::rand(&mut rng),
+                C::ScalarField::rand(&mut rng),
+            )
+        } else {
+            (
+                C::ScalarField::zero(),
+                C::ScalarField::zero(),
+                C::ScalarField::zero(),
+            )
+        };
+
+        let s_L2: Zeroizing<Vec<C::ScalarField>> =
+            Zeroizing::new((0..n2).map(|_| C::ScalarField::rand(&mut rng)).collect());
+        let s_R2: Zeroizing<Vec<C::ScalarField>> =
+            Zeroizing::new((0..n2).map(|_| C::ScalarField::rand(&mut rng)).collect());
+
+        // Collect phase 2 scalars (instead of computing MSMs at line 719-762)
+        let (a_i2_scalars, a_o2_scalars, s2_scalars) = if has_2nd_phase {
+            let mut a_i2 = Vec::with_capacity(2 * n2 + 1);
+            a_i2.push(i_blinding2);
+            a_i2.extend(self.secrets.a_L.iter().skip(n1).copied());
+            a_i2.extend(self.secrets.a_R.iter().skip(n1).copied());
+
+            let mut a_o2 = Vec::with_capacity(n2 + 1);
+            a_o2.push(o_blinding2);
+            a_o2.extend(self.secrets.a_O.iter().skip(n1).copied());
+
+            let mut s2 = Vec::with_capacity(2 * n2 + 1);
+            s2.push(s_blinding2);
+            s2.extend(s_L2.iter().copied());
+            s2.extend(s_R2.iter().copied());
+
+            (a_i2, a_o2, s2)
+        } else {
+            (vec![], vec![], vec![])
+        };
+
+        Ok((
+            ProverPreMsm {
+                transcript: self.transcript,
+                secrets: self.secrets,
+                constraints: self.constraints,
+                n1,
+                n2,
+                pc_gens: pc_gens_copy,
+                i_blinding1,
+                o_blinding1,
+                s_blinding1,
+                i_blinding2,
+                o_blinding2,
+                s_blinding2,
+                s_L1,
+                s_R1,
+                s_L2,
+                s_R2,
+                ncomm,
+                op_degree,
+            },
+            ProverScalars {
+                a_i1: a_i1_scalars,
+                a_o1: a_o1_scalars,
+                s1: s1_scalars,
+                a_i2: a_i2_scalars,
+                a_o2: a_o2_scalars,
+                s2: s2_scalars,
+            },
+        ))
     }
 
     /// Consume this `ConstraintSystem` to produce a proof.
@@ -1120,5 +1320,222 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
             r_vec,
         };
         Ok((proof, self.transcript))
+    }
+}
+
+impl<C, T> ProverPreMsm<C, T>
+where
+    C: AffineRepr,
+    T: BorrowMut<Transcript>,
+{
+    /// Complete proof generation given precomputed commitment points
+    ///
+    /// Takes the 6 commitment points computed via batch MSM and completes
+    /// the proof generation by continuing from where collect_scalars left off.
+    ///
+    /// # Arguments
+    ///
+    /// * `A_I1`, `A_O1`, `S1` - Phase 1 commitment points
+    /// * `A_I2`, `A_O2`, `S2` - Phase 2 commitment points
+    ///
+    /// # Returns
+    ///
+    /// Completed R1CS proof
+    pub fn complete_with_commitments(
+        mut self,
+        A_I1: C,
+        A_O1: C,
+        S1: C,
+        A_I2: C,
+        A_O2: C,
+        S2: C,
+    ) -> Result<R1CSProof<C>, R1CSError> {
+        use crate::proving::bulletproofs::util;
+
+        let n = self.n1 + self.n2;
+
+        // Append commitments to transcript (same as prove_and_return_transcript line 674-776)
+        let transcript = self.transcript.borrow_mut();
+        transcript.append_point(b"A_I1", &A_I1);
+        transcript.append_point(b"A_O1", &A_O1);
+        transcript.append_point(b"S1", &S1);
+        transcript.append_point(b"A_I2", &A_I2);
+        transcript.append_point(b"A_O2", &A_O2);
+        transcript.append_point(b"S2", &S2);
+
+        // Continue with rest of proof generation (from line 778+)
+        // 4. Compute blinded vector polynomials l(x) and r(x)
+
+        let y = transcript.challenge_scalar::<C>(b"y");
+        let z = transcript.challenge_scalar::<C>(b"z");
+
+        // Flatten constraints
+        let mut wL = vec![C::ScalarField::zero(); n];
+        let mut wR = vec![C::ScalarField::zero(); n];
+        let mut wO = vec![C::ScalarField::zero(); n];
+        let mut wV = vec![C::ScalarField::zero(); self.secrets.v.len()];
+
+        let mut wVCs = Vec::with_capacity(self.secrets.vec_open.len());
+        for v in self.secrets.vec_open.iter() {
+            wVCs.push(vec![C::ScalarField::zero(); v.1.len()]);
+        }
+
+        let mut exp_z = z;
+        for lc in self.constraints.iter() {
+            for (var, coeff) in &lc.terms {
+                match var {
+                    super::linear_combination::Variable::MultiplierLeft(i) => {
+                        wL[*i] += exp_z * coeff;
+                    }
+                    super::linear_combination::Variable::MultiplierRight(i) => {
+                        wR[*i] += exp_z * coeff;
+                    }
+                    super::linear_combination::Variable::MultiplierOutput(i) => {
+                        wO[*i] += exp_z * coeff;
+                    }
+                    super::linear_combination::Variable::Committed(i) => {
+                        wV[*i] -= exp_z * coeff;
+                    }
+                    super::linear_combination::Variable::VectorCommit(j, i) => {
+                        wVCs[*j][*i] += exp_z * coeff;
+                    }
+                    super::linear_combination::Variable::One(_) => {
+                        // The prover doesn't need to handle constant terms
+                    }
+                }
+            }
+            exp_z *= z;
+        }
+
+        let ops = super::op_splits(self.op_degree);
+        let veccom_ops = &ops[2..];
+
+        let mut l_poly = util::VecPoly::<C::ScalarField>::zero(n, self.op_degree + 1);
+        let mut r_poly = util::VecPoly::<C::ScalarField>::zero(n, self.op_degree + 1);
+
+        let y_inv = y.inverse().unwrap();
+
+        let exp_y_inv = util::exp_iter(y_inv).take(n).collect::<Vec<_>>();
+        let exp_y = util::exp_iter(y).take(n).collect::<Vec<_>>();
+
+        let sLsR = self
+            .s_L1
+            .iter()
+            .chain(self.s_L2.iter())
+            .zip(self.s_R1.iter().chain(self.s_R2.iter()));
+
+        for (i, (sl, sr)) in sLsR.enumerate() {
+            l_poly.coeff_mut(ops[0].0)[i] = self.secrets.a_L[i] + exp_y_inv[i] * wR[i];
+            r_poly.coeff_mut(ops[0].1)[i] = exp_y[i] * self.secrets.a_R[i] + wL[i];
+
+            l_poly.coeff_mut(ops[1].0)[i] = self.secrets.a_O[i];
+            r_poly.coeff_mut(ops[1].1)[i] = wO[i] - exp_y[i];
+
+            l_poly.coeff_mut(self.op_degree + 1)[i] = *sl;
+            r_poly.coeff_mut(self.op_degree + 1)[i] = exp_y[i] * sr;
+        }
+
+        // veccom constraints
+        for (j, w) in self.secrets.vec_open.iter().enumerate() {
+            let (l_deg, r_deg) = veccom_ops[j];
+            for i in 0..w.1.len() {
+                l_poly.coeff_mut(l_deg)[i] = w.1[i];
+                r_poly.coeff_mut(r_deg)[i] = wVCs[j][i];
+            }
+        }
+
+        let mut t_poly = util::VecPoly::inner_product(&l_poly, &r_poly);
+
+        // commit to t-poly
+        let mut rng = rand::thread_rng();
+        let mut t_blinding_poly = util::Poly::zero(t_poly.deg());
+        for d in 0..t_poly.deg() + 1 {
+            if d == self.op_degree {
+                continue;
+            }
+            t_blinding_poly.coeff()[d] = C::ScalarField::rand(&mut rng);
+        }
+
+        let mut T = vec![C::zero(); t_poly.deg() + 1];
+        #[allow(clippy::needless_range_loop)]
+        for d in 0..t_poly.deg() + 1 {
+            if d == self.op_degree {
+                continue;
+            }
+            T[d] = self
+                .pc_gens
+                .commit(t_poly.coeff()[d], t_blinding_poly.coeff()[d]);
+        }
+
+        let transcript = self.transcript.borrow_mut();
+        for (d, td) in T.iter().enumerate() {
+            if d == self.op_degree {
+                continue;
+            }
+            transcript.append_point(util::T_LABELS[d], td);
+        }
+
+        let u = transcript.challenge_scalar::<C>(b"u");
+        let x = transcript.challenge_scalar::<C>(b"x");
+
+        t_blinding_poly.coeff()[self.op_degree] = wV
+            .iter()
+            .zip(self.secrets.v_blinding.iter())
+            .map(|(c, v_blinding)| *c * v_blinding)
+            .sum();
+
+        let t_x = t_poly.eval(x);
+        let t_x_blinding = t_blinding_poly.eval(x);
+
+        let l_vec = l_poly.eval(x);
+        let r_vec = r_poly.eval(x);
+
+        let i_blinding = self.i_blinding1 + u * self.i_blinding2;
+        let o_blinding = self.o_blinding1 + u * self.o_blinding2;
+        let s_blinding = self.s_blinding1 + u * self.s_blinding2;
+
+        let mut e_terms: Vec<Option<C::ScalarField>> = vec![None; l_poly.deg() + 1];
+
+        e_terms[ops[0].0] = Some(i_blinding);
+        e_terms[ops[1].0] = Some(o_blinding);
+
+        for j in 0..self.ncomm {
+            e_terms[veccom_ops[j].0] = Some(self.secrets.vec_open[j].0);
+        }
+
+        e_terms[self.op_degree + 1] = Some(s_blinding);
+
+        let mut e_blinding = C::ScalarField::zero();
+        {
+            let mut xn = C::ScalarField::one();
+            for bnd in e_terms.into_iter() {
+                if let Some(val) = bnd {
+                    e_blinding += xn * val;
+                }
+                xn *= x;
+            }
+        }
+
+        transcript.append_scalar::<C>(b"t_x", &t_x);
+        transcript.append_scalar::<C>(b"t_x_blinding", &t_x_blinding);
+        transcript.append_scalar::<C>(b"e_blinding", &e_blinding);
+
+        let _w = transcript.challenge_scalar::<C>(b"w");
+
+        let proof = R1CSProof {
+            A_I1,
+            A_O1,
+            S1,
+            A_I2,
+            A_O2,
+            S2,
+            T,
+            t_x,
+            t_x_blinding,
+            e_blinding,
+            l_vec,
+            r_vec,
+        };
+        Ok(proof)
     }
 }

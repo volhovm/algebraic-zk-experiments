@@ -79,6 +79,10 @@ r1cs = [
 print-trace = ["ark-std/print-trace"]
 
 [[bench]]
+name = "batch_schnorr_bench"
+harness = false
+
+[[bench]]
 name = "batch_verification_bench"
 harness = false
 
@@ -92,10 +96,6 @@ harness = false
 
 [[bench]]
 name = "forward_bench"
-harness = false
-
-[[bench]]
-name = "forward_simple_bench"
 harness = false
 
 [[bench]]

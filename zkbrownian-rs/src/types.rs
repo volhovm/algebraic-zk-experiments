@@ -374,6 +374,9 @@ pub struct PublicParams {
     pub h_g3: G3,
     /// Precomputed lookup tables for rerandomize gadget
     pub g3_tables: Vec<crate::proving::relations::lookup::Lookup3Bit<2, ScalarField>>,
+    /// Precomputed MSM tables for batch Schnorr proving
+    /// Built once during setup, used for all prove_schnorr_bridging_batch calls
+    pub batch_tables: crate::proving::bulletproofs::BatchProvingTables<ark_bls12_381::G1Affine>,
 }
 
 impl PublicParams {
@@ -428,6 +431,18 @@ impl PublicParams {
             Groth16::<PairingEngine>::circuit_specific_setup(weight_circuit, rng)
                 .map_err(|e| ProtocolError::CryptoError(format!("Setup failed: {:?}", e)))?;
 
+        // Determine circuit size for batch tables
+        // The Schnorr bridging circuit has exactly 1795 constraints per rerandomize,
+        // and we have 2 rerandomize operations, so n1 = 1795
+        // We currently have no second phase constraints (n2 = 0)
+        // Note: n1 must match the actual circuit size, not be rounded up
+        let n1 = 1795; // Exact size to match the actual Schnorr bridging circuit
+        let n2 = 0; // Currently no 2nd phase in Schnorr bridging
+
+        let batch_tables = crate::proving::bulletproofs::BatchProvingTables::new(
+            &pc_gens, &bp_gens, n1, n2, 8, // window_bits=8 for balanced memory/performance
+        );
+
         Ok(PublicParams {
             num_nodes,
             max_out_degree,
@@ -438,6 +453,7 @@ impl PublicParams {
             bp_gens,
             h_g3,
             g3_tables,
+            batch_tables,
         })
     }
 }
