@@ -175,10 +175,76 @@ impl<G: CurveGroup> FixedBaseMsmTable<G> {
         result
     }
 
+    /// Compute multiple MSMs in parallel using the precomputed table
+    ///
+    /// This is more efficient than calling `msm` repeatedly because it parallelizes
+    /// window contributions across ALL MSMs, not just within each MSM.
+    ///
+    /// For batch_size MSMs with num_windows each, this computes all
+    /// batch_size × num_windows window contributions in parallel, then
+    /// combines them (also in parallel across MSMs).
+    ///
+    /// # Arguments
+    ///
+    /// * `all_scalars` - Vector of scalar vectors, one per MSM
+    ///
+    /// # Panics
+    ///
+    /// Panics if any scalar vector has incorrect length
     pub fn msm_batch(&self, all_scalars: &[Vec<G::ScalarField>]) -> Vec<G> {
-        all_scalars
-            .iter()
-            .map(|scalars| self.msm(scalars))
+        if all_scalars.is_empty() {
+            return vec![];
+        }
+
+        // Validate all scalar vectors have correct length
+        for (idx, scalars) in all_scalars.iter().enumerate() {
+            assert_eq!(
+                scalars.len(),
+                self.table.len(),
+                "Scalar vector {} has length {}, expected {}",
+                idx,
+                scalars.len(),
+                self.table.len()
+            );
+        }
+
+        let scalar_bits = G::ScalarField::MODULUS_BIT_SIZE as usize;
+        let num_windows = scalar_bits.div_ceil(self.window_bits);
+        let num_msms = all_scalars.len();
+
+        use rayon::prelude::*;
+
+        // Compute all window contributions in parallel across all MSMs
+        // Layout: window_contributions[msm_idx * num_windows + window_idx]
+        let total_contributions = num_msms * num_windows;
+        let window_contributions: Vec<G> = (0..total_contributions)
+            .into_par_iter()
+            .map(|idx| {
+                let msm_idx = idx / num_windows;
+                let window_idx = idx % num_windows;
+                self.compute_window_contribution(&all_scalars[msm_idx], window_idx)
+            })
+            .collect();
+
+        // Combine windows for each MSM (parallel across MSMs, sequential within each)
+        (0..num_msms)
+            .into_par_iter()
+            .map(|msm_idx| {
+                let base_idx = msm_idx * num_windows;
+
+                // Start with the contribution from the most significant window
+                let mut result = window_contributions[base_idx + num_windows - 1];
+
+                // Process remaining windows from MSB-1 down to LSB
+                for window_idx in (0..num_windows - 1).rev() {
+                    for _ in 0..self.window_bits {
+                        result.double_in_place();
+                    }
+                    result += window_contributions[base_idx + window_idx];
+                }
+
+                result
+            })
             .collect()
     }
 
@@ -561,7 +627,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Number of scalars must match number of bases")]
+    #[should_panic(expected = "Scalar vector 1 has length")]
     fn test_msm_batch_mismatched_lengths() {
         let mut rng = thread_rng();
 

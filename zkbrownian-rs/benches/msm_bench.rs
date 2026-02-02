@@ -91,7 +91,7 @@ fn bench_fixed_base_msm_table(c: &mut Criterion) {
     // Test sizes: 512, 1024, 2048, 2500, 4096
     let sizes = [512, 1024, 2048, 2500, 4096];
     // Test different window sizes
-    let window_sizes = [4, 8, 12];
+    let window_sizes = [8];
 
     for &window_bits in &window_sizes {
         let mut group = c.benchmark_group(format!("fixed_base_msm_w{}", window_bits));
@@ -152,8 +152,8 @@ fn bench_fixed_base_msm_batch(c: &mut Criterion) {
     let mut rng = thread_rng();
 
     // Test different batch sizes
-    let base_sizes = [256, 512, 1024];
-    let batch_sizes = [10, 50, 100];
+    let base_sizes = [1024, 2048];
+    let batch_sizes = [512, 1024, 2048];
     let window_bits = 8;
 
     for &base_size in &base_sizes {
