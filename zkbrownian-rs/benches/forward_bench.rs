@@ -67,21 +67,22 @@ fn bench_forward(c: &mut Criterion) {
 fn bench_forward_batch(c: &mut Criterion) {
     let mut rng = thread_rng();
 
-    // Create public parameters with more nodes for batching
-    let pp = PublicParams::generate(256, 32, &mut rng).expect("Failed to generate params");
-
-    // Setup: generate protocol state with multiple users
-    let num_users = 500;
-    let generated_state = generate_random_state(&pp, num_users, &mut rng);
-
     // Create a group for batch size comparison
     let mut group = c.benchmark_group("forward_batch");
+    group.sample_size(10);
+
+    // Create public parameters with more nodes for batching
+    let pp = PublicParams::generate(8, 8, &mut rng).expect("Failed to generate params");
+
+    // Setup: generate protocol state with multiple users
+    let num_users = 8;
+    let generated_state = generate_random_state(&pp, num_users, &mut rng);
 
     for batch_size in [50, 100, 250, 500] {
         // Prepare batch_size messages
         let inputs: Vec<_> = (0..batch_size)
             .map(|i| {
-                let user_view = &generated_state.users_view[i % num_users];
+                let user_view = &generated_state.users_view[0];
                 let message = spawn(
                     &user_view.secret_key,
                     &user_view.public_key,
