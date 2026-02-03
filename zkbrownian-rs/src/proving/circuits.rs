@@ -515,15 +515,17 @@ pub fn prove_schnorr_bridging_batch(
         return Ok(vec![]);
     }
 
-    // 1. Create all provers with their constraints (sequential - fast, no crypto)
+    // 1. Create all provers with their constraints (parallelized with rayon)
     // Each prover owns its transcript
     let mut transcripts: Vec<Transcript> = (0..witnesses.len())
         .map(|_| Transcript::new(b"SchnorrBridging"))
         .collect();
 
+    use rayon::prelude::*;
+    // TODO: this part is still quite expensive (12% of proving) and can be perhaps optimised.
     let provers: Vec<_> = witnesses
-        .iter()
-        .zip(transcripts.iter_mut())
+        .par_iter()
+        .zip(transcripts.par_iter_mut())
         .map(|(witness, transcript)| {
             let pk_star_g3 = witness.pk_star_g3;
             let pk_star_blinded = witness.pk_star_blinded;
@@ -577,7 +579,7 @@ pub fn prove_schnorr_bridging_batch(
         })
         .collect();
 
-    // 2. Batch prove using precomputed tables (THE BOTTLENECK - NOW OPTIMIZED)
+    // 2. Batch prove using precomputed tables
     let proofs = prove_batch(provers, bp_gens, tables)
         .map_err(|e| ProtocolError::CryptoError(format!("Batch proving failed: {:?}", e)))?;
 

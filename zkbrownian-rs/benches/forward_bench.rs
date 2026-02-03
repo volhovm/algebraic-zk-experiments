@@ -112,6 +112,9 @@ fn bench_forward_batch(c: &mut Criterion) {
 fn bench_forward_sequential_vs_batch(c: &mut Criterion) {
     let mut rng = thread_rng();
 
+    let mut group = c.benchmark_group("forward_sequential_vs_batch");
+    group.sample_size(10);
+
     // Create public parameters
     let pp = PublicParams::generate(8, 8, &mut rng).expect("Failed to generate params");
 
@@ -120,42 +123,45 @@ fn bench_forward_sequential_vs_batch(c: &mut Criterion) {
     let generated_state = generate_random_state(&pp, num_users, &mut rng);
 
     // Prepare 100 messages for comparison
-    let batch_size = 100;
-    let inputs: Vec<_> = (0..batch_size)
-        .map(|i| {
-            let user_view = &generated_state.users_view[0];
-            let message = spawn(
-                &user_view.secret_key,
-                &user_view.public_key,
-                1 + i as u32,
-                100,
-                &mut rng,
-            )
-            .unwrap();
-            (user_view.clone(), message)
-        })
-        .collect();
+    for batch_size in [64, 128, 256] {
+        let inputs: Vec<_> = (0..batch_size)
+            .map(|i| {
+                let user_view = &generated_state.users_view[0];
+                let message = spawn(
+                    &user_view.secret_key,
+                    &user_view.public_key,
+                    1 + i as u32,
+                    100,
+                    &mut rng,
+                )
+                .unwrap();
+                (user_view.clone(), message)
+            })
+            .collect();
 
-    // Benchmark batch forward
-    c.bench_function("forward_batch_100", |b| {
-        b.iter(|| {
-            let _ = forward_batch(black_box(&pp), black_box(&inputs), black_box(&mut rng));
+        // Benchmark batch forward
+        group.bench_function(format!("forward_batch_{}", batch_size), |b| {
+            b.iter(|| {
+                let _ = forward_batch(black_box(&pp), black_box(&inputs), black_box(&mut rng));
+            });
         });
-    });
 
-    // Benchmark sequential forward
-    c.bench_function("forward_sequential_100", |b| {
-        b.iter(|| {
-            for (user_view, message) in &inputs {
-                let _ = forward(
-                    black_box(&pp),
-                    black_box(user_view),
-                    black_box(message),
-                    black_box(&mut rng),
-                );
-            }
+        // Benchmark sequential forward
+        group.bench_function(format!("forward_sequential_{}", batch_size), |b| {
+            b.iter(|| {
+                for (user_view, message) in &inputs {
+                    let _ = forward(
+                        black_box(&pp),
+                        black_box(user_view),
+                        black_box(message),
+                        black_box(&mut rng),
+                    );
+                }
+            });
         });
-    });
+    }
+
+    group.finish();
 }
 
 criterion_group!(

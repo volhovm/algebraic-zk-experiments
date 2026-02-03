@@ -14,6 +14,7 @@ use ark_ec::AffineRepr;
 use ark_std::Zero;
 use core::borrow::BorrowMut;
 use merlin::Transcript;
+use rayon::prelude::*;
 
 /// Batch prove multiple R1CS proofs using precomputed MSM tables
 ///
@@ -55,7 +56,9 @@ pub fn prove_batch<C, T>(
 ) -> Result<Vec<R1CSProof<C>>, R1CSError>
 where
     C: AffineRepr,
-    T: BorrowMut<Transcript>,
+    C::Group: Send,
+    C::ScalarField: Send,
+    T: BorrowMut<Transcript> + Send,
 {
     let num_proofs = provers.len();
 
@@ -72,7 +75,6 @@ where
         .unzip();
 
     // Phase 2: Batch MSM for each commitment type
-
     // A_I1 batch (parallel across all proofs)
     let a_i1_scalar_vecs: Vec<Vec<C::ScalarField>> =
         all_scalars.iter().map(|s| s.a_i1.clone()).collect();
@@ -117,7 +119,7 @@ where
 
     // Phase 3: Complete proofs with computed commitments
     states
-        .into_iter()
+        .into_par_iter()
         .enumerate()
         .map(|(i, state)| {
             state.complete_with_commitments(
