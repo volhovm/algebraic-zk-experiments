@@ -817,19 +817,26 @@ pub fn forward_batch<R: Rng>(
             let g_theta = g1_base_proj * theta;
             let g_phi = G1Projective::from(pd.phi_nu_plus_1.phi);
 
-            // Find receiver for diversified ppk
-            let receiver = pd
-                .message
-                .latest_ppk()
-                .ok_or_else(|| ProtocolError::CryptoError("No receiver ppk".to_string()))?;
+            // ppk_s is from the previous hop (or ppk_0 if this is the first hop)
+            // ppk_r is the diversified public key of the current hop (ppk_nu_plus_1)
+            // See verify.rs:122-127 for ppk_s and verify.rs:149 for ppk_r
+            let (ppk_s_1, ppk_s_2) = if pd.message.hop_count() == 0 {
+                (pd.message.ppk_0.ppk_1, pd.message.ppk_0.ppk_2)
+            } else {
+                let prev_ppk = pd
+                    .message
+                    .latest_ppk()
+                    .ok_or_else(|| ProtocolError::CryptoError("No previous ppk".to_string()))?;
+                (prev_ppk.ppk_1, prev_ppk.ppk_2)
+            };
 
             let pk_ops_instance = PublicKeyOperationsInstance {
                 pk_star: pd.pk_star,
                 pk_r_star: pd.pk_r_star,
-                ppk_s_1: pd.ppk_nu_plus_1.ppk_1,
-                ppk_s_2: pd.ppk_nu_plus_1.ppk_2,
-                ppk_r_1: receiver.ppk_1,
-                ppk_r_2: receiver.ppk_2,
+                ppk_s_1,
+                ppk_s_2,
+                ppk_r_1: pd.ppk_nu_plus_1.ppk_1,
+                ppk_r_2: pd.ppk_nu_plus_1.ppk_2,
                 g_theta,
                 g_phi,
             };
