@@ -102,6 +102,18 @@ harness = false
 name = "msm_bench"
 harness = false
 
+# Custom profile for faster test iteration
+# Use with: cargo test --profile test-fast
+[profile.test-fast]
+inherits = "dev"
+opt-level = 1              # -O1 optimization
+debug = 0                  # No debug info
+debug-assertions = false   # Disable debug assertions (less noise)
+overflow-checks = false    # Disable overflow checks (less noise)
+lto = false                # No LTO for fast compilation
+incremental = true         # Enable incremental compilation
+codegen-units = 256        # More codegen units = faster compilation
+
 [patch.crates-io]
 ark-relations = { git = "https://github.com/arkworks-rs/snark.git" }
 ark-ff = { git = "https://github.com/arkworks-rs/algebra.git" }
