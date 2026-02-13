@@ -120,6 +120,8 @@ pub struct ProverPreMsm<C: AffineRepr, T: BorrowMut<Transcript>> {
     pub ncomm: usize,
     /// Op degree
     pub op_degree: usize,
+    /// Whether this is a 1-phase circuit (no deferred constraints)
+    pub is_1phase: bool,
 }
 
 /// Prover in the randomizing phase.
@@ -596,9 +598,23 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
         s1_scalars.extend(s_L1.iter().copied());
         s1_scalars.extend(s_R1.iter().copied());
 
-        // Create randomized constraints (same as line 680)
+        // NOTE: We do NOT call create_randomized_constraints() here!
+        // The domain separator must be added AFTER A_I1/A_O1/S1 are appended to
+        // the transcript (which happens in complete_with_commitments).
+        // For now, batch proving only supports 1-phase circuits (no deferred constraints).
+        let is_1phase = self.deferred_constraints.is_empty();
+        if !is_1phase {
+            return Err(R1CSError::GadgetError {
+                description:
+                    "Batch proving not supported for circuits with deferred constraints (2-phase)"
+                        .to_string(),
+            });
+        }
+
+        // Clear pending multiplier (same as create_randomized_constraints does)
+        self.pending_multiplier = None;
+
         let pc_gens_copy = self.pc_gens.clone();
-        self = self.create_randomized_constraints()?;
 
         let n = self.size();
         let n2 = n - n1;
@@ -669,6 +685,7 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
                 s_R2,
                 ncomm,
                 op_degree,
+                is_1phase,
             },
             ProverScalars {
                 a_i1: a_i1_scalars,
@@ -1350,15 +1367,29 @@ where
         A_O2: C,
         S2: C,
     ) -> Result<R1CSProof<C>, R1CSError> {
+        use crate::proving::bulletproofs::transcript::TranscriptProtocol;
         use crate::proving::bulletproofs::util;
 
         let n = self.n1 + self.n2;
 
-        // Append commitments to transcript (same as prove_and_return_transcript line 674-776)
+        // Append commitments to transcript in CORRECT order:
+        // 1. Append A_I1, A_O1, S1 (phase 1 commitments)
+        // 2. Add domain separator (must come AFTER phase 1 commits, BEFORE phase 2)
+        // 3. Append A_I2, A_O2, S2 (phase 2 commitments)
+        // This matches the order in prove_and_return_transcript.
         let transcript = self.transcript.borrow_mut();
         transcript.append_point(b"A_I1", &A_I1);
         transcript.append_point(b"A_O1", &A_O1);
         transcript.append_point(b"S1", &S1);
+
+        // Add domain separator (same position as create_randomized_constraints in prove_and_return_transcript)
+        if self.is_1phase {
+            transcript.r1cs_1phase_domain_sep();
+        } else {
+            // 2-phase circuits should have been rejected in collect_scalars
+            transcript.r1cs_2phase_domain_sep();
+        }
+
         transcript.append_point(b"A_I2", &A_I2);
         transcript.append_point(b"A_O2", &A_O2);
         transcript.append_point(b"S2", &S2);

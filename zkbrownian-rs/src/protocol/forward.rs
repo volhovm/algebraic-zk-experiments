@@ -649,6 +649,8 @@ struct BatchForwardPrepData {
     pk_star: G3,
     pk_r_star: G3,
     schnorr_witness: SchnorrBridgingWitness,
+    sk: SecretKey,
+    theta: ScalarField,
 }
 
 /// Forward multiple packets in batch, optimizing Schnorr proof generation
@@ -761,7 +763,7 @@ pub fn forward_batch<R: Rng>(
 
     // Phase 1c: Assemble prep data
     let mut prep_data = Vec::with_capacity(inputs.len());
-    for (i, (message, _, _, _, phi_nu_plus_1, ppk_nu_plus_1, k_r, d, _, _, _, _, _, _)) in
+    for (i, (message, _, sk, theta, phi_nu_plus_1, ppk_nu_plus_1, k_r, d, _, _, _, _, _, _)) in
         intermediate_data.into_iter().enumerate()
     {
         let (pi_1, pi_2, pi_3, c11, c12, c21, c22, cv1, cv2, pk_star, pk_r_star, schnorr_witness) =
@@ -785,6 +787,8 @@ pub fn forward_batch<R: Rng>(
             pk_star,
             pk_r_star,
             schnorr_witness,
+            sk,
+            theta,
         });
     }
 
@@ -813,8 +817,7 @@ pub fn forward_batch<R: Rng>(
                 .ok_or_else(|| ProtocolError::CryptoError("Missing G1 generator 0".to_string()))?;
             let g1_base_proj = G1Projective::from(*g1_base);
 
-            let theta = pd.schnorr_witness.rho; // TODO: Fix - should be theta, not rho
-            let g_theta = g1_base_proj * theta;
+            let g_theta = g1_base_proj * pd.theta;
             let g_phi = G1Projective::from(pd.phi_nu_plus_1.phi);
 
             // ppk_s is from the previous hop (or ppk_0 if this is the first hop)
@@ -841,12 +844,11 @@ pub fn forward_batch<R: Rng>(
                 g_phi,
             };
 
-            use ark_ff::Zero;
             let pk_ops_witness = PublicKeyOperationsWitness {
-                sk: ScalarField::zero(), // TODO: Get from prep data
+                sk: pd.sk.sk,
                 d: pd.d.d,
-                theta,
-                phi: theta, // TODO: Extract actual phi
+                theta: pd.theta,
+                phi: pd.theta, // TODO: Extract actual phi scalar (not just theta)
                 r_star: pd.schnorr_witness.r_star,
                 r_r_star: pd.schnorr_witness.r_r_star,
             };
@@ -1055,8 +1057,8 @@ fn prepare_forward_proof(
         c22,
         c_v1,
         c_v2,
-        pk_star,
-        pk_r_star,
+        pk_star_blinded,
+        pk_r_star_blinded,
         schnorr_witness,
     ))
 }
@@ -1263,8 +1265,8 @@ fn prepare_forward_proofs_batch(
                     c22,
                     c_v1,
                     c_v2,
-                    pk_star,
-                    pk_r_star,
+                    pk_star_blinded,
+                    pk_r_star_blinded,
                     schnorr_witness,
                 ))
             },
@@ -1709,8 +1711,8 @@ fn generate_forward_proof(
         G1Wrapper(c22.into_affine()),
         G1Wrapper(c_v1.into_affine()),
         G1Wrapper(c_v2.into_affine()),
-        G3Wrapper(pk_star),
-        G3Wrapper(pk_r_star),
+        G3Wrapper(pk_star_blinded),
+        G3Wrapper(pk_r_star_blinded),
     ))
 }
 

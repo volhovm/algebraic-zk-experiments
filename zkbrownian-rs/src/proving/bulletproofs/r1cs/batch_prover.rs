@@ -78,6 +78,7 @@ where
     // A_I1 batch (parallel across all proofs)
     let a_i1_scalar_vecs: Vec<Vec<C::ScalarField>> =
         all_scalars.iter().map(|s| s.a_i1.clone()).collect();
+
     let a_i1_results = tables.a_i1_table.msm_batch(&a_i1_scalar_vecs);
 
     // A_O1 batch

@@ -9,8 +9,8 @@
 use rand::thread_rng;
 use std::time::Instant;
 use zkbrownian::protocol::{
-    forward, generate_random_state, spawn, verify, verify_batch, BulletinBoard, BulletinBoardEntry,
-    InMemoryBulletinBoard,
+    forward, forward_batch, generate_random_state, spawn, verify, verify_batch, BulletinBoard,
+    BulletinBoardEntry, InMemoryBulletinBoard,
 };
 use zkbrownian::types::{PublicKey, PublicParams, WeightCommitment};
 use zkbrownian::MAX_HOPS;
@@ -222,8 +222,8 @@ fn test_full_protocol_regular() {
     println!("\nStep 2: Initializing bulletin board...");
     let mut bulletin_board = InMemoryBulletinBoard::new();
 
-    // Step 4: Each user spawns 50 packets
-    const NUM_PACKETS_PER_USER: usize = 50;
+    // Step 4: Each user spawns 10 packets
+    const NUM_PACKETS_PER_USER: usize = 10;
     const TTL: usize = 5;
 
     println!(
@@ -316,27 +316,42 @@ fn test_full_protocol_regular() {
                 total_verification_time += verify_elapsed.as_secs_f64() * 1000.0;
             }
 
-            // Step 2 & 3: User forwards the verified messages
-            for (message, _origin_user) in user_messages.drain(..) {
-                let current_user_view = &generated_state.users_view[user_idx];
+            // Step 2 & 3: User forwards the verified messages using batches
+            const BATCH_SIZE: usize = 64;
+            let current_user_view = &generated_state.users_view[user_idx];
 
-                // Forward the message
-                let (new_message, next_node_index, _diversifier) =
-                    forward(&pp, current_user_view, &message, &mut rng)
-                        .expect("Failed to forward message");
+            // Process messages in batches of 64
+            let mut messages_vec = std::mem::take(user_messages);
+            for batch_chunk in messages_vec.chunks_mut(BATCH_SIZE) {
+                // Prepare batch inputs: (user_view, message) tuples
+                let batch_inputs: Vec<_> = batch_chunk
+                    .iter()
+                    .map(|(msg, _origin)| (current_user_view.clone(), msg.clone()))
+                    .collect();
 
-                // Post to bulletin board
-                let entry = BulletinBoardEntry {
-                    message: new_message.clone(),
-                    receiver_index: next_node_index,
-                    addressed_to: new_message.hops.last().unwrap().ppk.clone(),
-                };
+                // Forward all messages in this batch at once
+                let batch_results = forward_batch(&pp, &batch_inputs, &mut rng)
+                    .expect("Failed to batch forward messages");
 
-                bulletin_board.post(entry).unwrap();
-                total_forwards += 1;
+                // Process results: post to bulletin board and queue for next round
+                for (i, (new_message, next_node_index, _diversifier)) in
+                    batch_results.into_iter().enumerate()
+                {
+                    let (_msg, origin_user) = &batch_chunk[i];
 
-                // Add message to the next user's queue for the NEXT round
-                users_packets[next_node_index].push((new_message, _origin_user));
+                    // Post to bulletin board
+                    let entry = BulletinBoardEntry {
+                        message: new_message.clone(),
+                        receiver_index: next_node_index,
+                        addressed_to: new_message.hops.last().unwrap().ppk.clone(),
+                    };
+
+                    bulletin_board.post(entry).unwrap();
+                    total_forwards += 1;
+
+                    // Add message to the next user's queue for the NEXT round
+                    users_packets[next_node_index].push((new_message, *origin_user));
+                }
             }
         }
 

@@ -4,8 +4,8 @@
 //! (which is 48% faster) and batch forward (which is only 22% faster).
 
 use rand::{thread_rng, SeedableRng};
-use zkbrownian::protocol::{forward, forward_batch, generate_random_state, spawn};
-use zkbrownian::types::PublicParams;
+use zkbrownian::protocol::{forward, forward_batch, generate_random_state, spawn, verify_batch};
+use zkbrownian::types::{PublicKey, PublicParams, WeightCommitment};
 
 #[test]
 fn test_forward_sequential_then_batch_timing() {
@@ -299,6 +299,69 @@ fn test_forward_sequential_vs_batch_correctness() {
         sequential_receivers, batch_receivers,
         "Receiver distributions should match"
     );
+
+    // Test 4: Verify all messages
+    println!("\n=== Verifying messages ===");
+
+    let all_public_keys: Vec<PublicKey> = generated_state
+        .users_view
+        .iter()
+        .map(|user_view| user_view.public_key.clone())
+        .collect();
+
+    let weight_commitment = WeightCommitment {
+        commitment: vec![],
+        metadata: vec![],
+    };
+
+    // Verify sequential messages
+    println!("  Verifying {} sequential messages...", BATCH_SIZE);
+    let sequential_msgs: Vec<_> = sequential_results
+        .iter()
+        .map(|(msg, _, _)| msg.clone())
+        .collect();
+    let seq_valid = verify_batch(
+        &sequential_msgs,
+        generated_state.protocol_state.merkle_tree.root,
+        &weight_commitment,
+        &all_public_keys,
+        &pp,
+    )
+    .expect("Sequential verification error");
+    assert!(seq_valid, "Sequential messages should verify");
+    println!("  ✓ Sequential messages verified successfully!");
+
+    // Verify batch messages - one by one to find the failure
+    println!("  Verifying {} batch messages one by one...", BATCH_SIZE);
+    for (i, (msg, _, _)) in batch_results.iter().enumerate() {
+        let result = verify_batch(
+            &[msg.clone()],
+            generated_state.protocol_state.merkle_tree.root,
+            &weight_commitment,
+            &all_public_keys,
+            &pp,
+        );
+        match result {
+            Ok(valid) => {
+                if !valid {
+                    panic!(
+                        "Batch message {} failed verification (returned false), hop_count={}",
+                        i,
+                        msg.hop_count()
+                    );
+                }
+            }
+            Err(e) => {
+                panic!(
+                    "Batch message {} failed verification with error: {:?}, hop_count={}",
+                    i,
+                    e,
+                    msg.hop_count()
+                );
+            }
+        }
+    }
+    println!("  ✓ All batch messages verified successfully!");
 
     println!("\n=== Test Passed: Sequential and Batch produce identical results after 3 hops ===");
 }

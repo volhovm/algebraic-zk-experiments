@@ -510,6 +510,7 @@ pub fn prove_schnorr_bridging_batch(
     use crate::proving::relations::curve::PointRepresentation;
     use crate::proving::relations::rerandomize::re_randomize;
     use merlin::Transcript;
+    use rayon::prelude::*;
 
     if witnesses.is_empty() {
         return Ok(vec![]);
@@ -521,7 +522,6 @@ pub fn prove_schnorr_bridging_batch(
         .map(|_| Transcript::new(b"SchnorrBridging"))
         .collect();
 
-    use rayon::prelude::*;
     // TODO: this part is still quite expensive (12% of proving) and can be perhaps optimised.
     let provers: Vec<_> = witnesses
         .par_iter()
@@ -578,6 +578,15 @@ pub fn prove_schnorr_bridging_batch(
             prover
         })
         .collect();
+
+    // Debug: print circuit size of first prover
+    if !provers.is_empty() {
+        let metrics = provers[0].metrics();
+        eprintln!(
+            "DEBUG prove_schnorr_bridging_batch: multipliers={}, constraints={}, table.n1={}",
+            metrics.multipliers, metrics.constraints, tables.n1
+        );
+    }
 
     // 2. Batch prove using precomputed tables
     let proofs = prove_batch(provers, bp_gens, tables)

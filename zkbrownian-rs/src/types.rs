@@ -432,11 +432,12 @@ impl PublicParams {
                 .map_err(|e| ProtocolError::CryptoError(format!("Setup failed: {:?}", e)))?;
 
         // Determine circuit size for batch tables
-        // The Schnorr bridging circuit has exactly 1795 constraints per rerandomize,
-        // and we have 2 rerandomize operations, so n1 = 1795
+        // The Schnorr bridging circuit has 2 re_randomize operations.
+        // Each re_randomize adds constraints. With n1=1795, each has ~897 multipliers.
+        // Total multipliers for 2 re_randomize operations = ~1795
         // We currently have no second phase constraints (n2 = 0)
         // Note: n1 must match the actual circuit size, not be rounded up
-        let n1 = 1795; // Exact size to match the actual Schnorr bridging circuit
+        let n1 = 1795; // Total size for the Schnorr bridging circuit (2 re_randomize)
         let n2 = 0; // Currently no 2nd phase in Schnorr bridging
 
         let batch_tables = crate::proving::bulletproofs::BatchProvingTables::new(
