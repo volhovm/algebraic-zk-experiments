@@ -548,6 +548,7 @@ impl<'g, T: BorrowMut<Transcript>, C: AffineRepr> Prover<'g, T, C> {
     /// Returns (ProverPreMsm, ProverScalars) tuple containing:
     /// - ProverPreMsm: State needed to complete proof after MSMs
     /// - ProverScalars: Scalar vectors for each of the 6 MSM operations
+    #[allow(clippy::type_complexity)]
     pub fn collect_scalars(
         mut self,
         bp_gens: &BulletproofGens<C>,

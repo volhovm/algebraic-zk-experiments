@@ -43,11 +43,11 @@ fn test_forward_sequential_then_batch_timing() {
         for (i, (user_view, message)) in inputs.iter().enumerate() {
             print!(".");
             if i % 32 == 31 {
-                println!("");
+                println!();
             }
             let _ = forward(&pp, user_view, message, &mut rng);
         }
-        print!("\n");
+        println!();
 
         let sequential_time = sequential_start.elapsed();
         println!("\n=== SEQUENTIAL TOTAL: {:?} ===", sequential_time);
@@ -335,7 +335,7 @@ fn test_forward_sequential_vs_batch_correctness() {
     println!("  Verifying {} batch messages one by one...", BATCH_SIZE);
     for (i, (msg, _, _)) in batch_results.iter().enumerate() {
         let result = verify_batch(
-            &[msg.clone()],
+            std::slice::from_ref(msg),
             generated_state.protocol_state.merkle_tree.root,
             &weight_commitment,
             &all_public_keys,

@@ -1,7 +1,7 @@
 //! Benchmarks for MSM (Multi-Scalar Multiplication) operations
 
 use ark_bls12_381::{Fr, G1Affine, G1Projective};
-use ark_ec::{scalar_mul::BatchMulPreprocessing, AffineRepr, CurveGroup, VariableBaseMSM};
+use ark_ec::{AffineRepr, CurveGroup, VariableBaseMSM};
 use ark_std::UniformRand;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use rand::thread_rng;
@@ -124,8 +124,7 @@ fn bench_fixed_base_msm_batch(c: &mut Criterion) {
                 .map(|_| G1Projective::rand(&mut rng))
                 .collect();
 
-            let bases_affine: Vec<G1Affine> =
-                bases.iter().map(|x| x.clone().into_affine()).collect();
+            let bases_affine: Vec<G1Affine> = bases.iter().map(|x| (*x).into_affine()).collect();
 
             // Precompute table once
             let table = FixedBaseMsmTable::new(&bases, window_bits);
@@ -169,7 +168,7 @@ fn bench_fixed_base_msm_batch(c: &mut Criterion) {
                         .map(|scalars| {
                             black_box(<G1Projective as VariableBaseMSM>::msm_unchecked(
                                 black_box(&bases_affine),
-                                black_box(&scalars),
+                                black_box(scalars),
                             ))
                         })
                         .collect();
