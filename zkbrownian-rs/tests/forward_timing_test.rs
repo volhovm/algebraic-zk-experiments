@@ -19,71 +19,72 @@ fn test_forward_sequential_then_batch_timing() {
     println!("=== Generating random state for 8 users ===");
     let generated_state = generate_random_state(&pp, 8, &mut rng);
 
-    let batch_size = 128;
-    println!("\n=== Preparing {} messages ===", batch_size);
-    let inputs: Vec<_> = (0..batch_size)
-        .map(|i| {
-            let user_view = &generated_state.users_view[0];
-            let message = spawn(
-                &user_view.secret_key,
-                &user_view.public_key,
-                1 + i as u32,
-                100,
-                &mut rng,
-            )
-            .unwrap();
-            (user_view.clone(), message)
-        })
-        .collect();
+    for batch_size in [32, 64, 128] {
+        println!("\n=== Preparing {} messages ===", batch_size);
+        let inputs: Vec<_> = (0..batch_size)
+            .map(|i| {
+                let user_view = &generated_state.users_view[0];
+                let message = spawn(
+                    &user_view.secret_key,
+                    &user_view.public_key,
+                    1 + i as u32,
+                    100,
+                    &mut rng,
+                )
+                .unwrap();
+                (user_view.clone(), message)
+            })
+            .collect();
 
-    // Test 1: Sequential forward (64 times)
-    println!("\n=== SEQUENTIAL FORWARD ({} messages) ===", batch_size);
-    let sequential_start = std::time::Instant::now();
+        // Test 1: Sequential forward (64 times)
+        println!("\n=== SEQUENTIAL FORWARD ({} messages) ===", batch_size);
+        let sequential_start = std::time::Instant::now();
 
-    for (i, (user_view, message)) in inputs.iter().enumerate() {
-        print!(".");
-        if i % 32 == 31 {
-            println!("");
+        for (i, (user_view, message)) in inputs.iter().enumerate() {
+            print!(".");
+            if i % 32 == 31 {
+                println!("");
+            }
+            let _ = forward(&pp, user_view, message, &mut rng);
         }
-        let _ = forward(&pp, user_view, message, &mut rng);
+        print!("\n");
+
+        let sequential_time = sequential_start.elapsed();
+        println!("\n=== SEQUENTIAL TOTAL: {:?} ===", sequential_time);
+        println!(
+            "=== SEQUENTIAL per message: {:?} ===\n",
+            sequential_time / batch_size as u32
+        );
+
+        // Test 2: Batch forward (all 64 at once)
+        println!("\n=== BATCH FORWARD ({} messages) ===", batch_size);
+        let batch_start = std::time::Instant::now();
+
+        let _ = forward_batch(&pp, &inputs, &mut rng);
+
+        let batch_time = batch_start.elapsed();
+        println!("\n=== BATCH TOTAL: {:?} ===", batch_time);
+        println!(
+            "=== BATCH per message: {:?} ===",
+            batch_time / batch_size as u32
+        );
+
+        // Print comparison
+        println!("\n========================================");
+        println!("COMPARISON:");
+        println!(
+            "  Sequential: {:?} ({:?} per msg)",
+            sequential_time,
+            sequential_time / batch_size as u32
+        );
+        println!(
+            "  Batch:      {:?} ({:?} per msg)",
+            batch_time,
+            batch_time / batch_size as u32
+        );
+
+        let speedup = sequential_time.as_secs_f64() / batch_time.as_secs_f64();
+        println!("  Speedup: {:.2}x", speedup);
+        println!("========================================");
     }
-    print!("\n");
-
-    let sequential_time = sequential_start.elapsed();
-    println!("\n=== SEQUENTIAL TOTAL: {:?} ===", sequential_time);
-    println!(
-        "=== SEQUENTIAL per message: {:?} ===\n",
-        sequential_time / batch_size as u32
-    );
-
-    // Test 2: Batch forward (all 64 at once)
-    println!("\n=== BATCH FORWARD ({} messages) ===", batch_size);
-    let batch_start = std::time::Instant::now();
-
-    let _ = forward_batch(&pp, &inputs, &mut rng);
-
-    let batch_time = batch_start.elapsed();
-    println!("\n=== BATCH TOTAL: {:?} ===", batch_time);
-    println!(
-        "=== BATCH per message: {:?} ===",
-        batch_time / batch_size as u32
-    );
-
-    // Print comparison
-    println!("\n========================================");
-    println!("COMPARISON:");
-    println!(
-        "  Sequential: {:?} ({:?} per msg)",
-        sequential_time,
-        sequential_time / batch_size as u32
-    );
-    println!(
-        "  Batch:      {:?} ({:?} per msg)",
-        batch_time,
-        batch_time / batch_size as u32
-    );
-
-    let speedup = sequential_time.as_secs_f64() / batch_time.as_secs_f64();
-    println!("  Speedup: {:.2}x", speedup);
-    println!("========================================");
 }
