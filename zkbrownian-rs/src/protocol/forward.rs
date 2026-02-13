@@ -529,7 +529,7 @@ pub fn forward<R: Rng>(
     user_view: &UserView,
     message: &Message,
     rng: &mut R,
-) -> ProtocolResult<(Message, usize, Diversifier)> {
+) -> ProtocolResult<(Message, usize)> {
     // Step 1: Check hop count
     let nu = message.hop_count();
     if nu >= MAX_HOPS {
@@ -624,7 +624,7 @@ pub fn forward<R: Rng>(
         pk_r_star,
     });
 
-    Ok((new_message, k_r, d))
+    Ok((new_message, k_r))
 }
 
 /// Intermediate data collected during batch forward preparation
@@ -680,7 +680,7 @@ pub fn forward_batch<R: Rng>(
     pp: &PublicParams,
     inputs: &[(UserView, Message)],
     rng: &mut R,
-) -> ProtocolResult<Vec<(Message, usize, Diversifier)>> {
+) -> ProtocolResult<Vec<(Message, usize)>> {
     if inputs.is_empty() {
         return Ok(vec![]);
     }
@@ -880,7 +880,7 @@ pub fn forward_batch<R: Rng>(
                 pk_r_star: G3Wrapper(pd.pk_r_star),
             });
 
-            Ok((new_message, pd.k_r, pd.d))
+            Ok((new_message, pd.k_r))
         })
         .collect()
 }
@@ -1752,7 +1752,7 @@ mod tests {
         let result = forward(&pp, user_0_view, &message, &mut rng);
 
         match result {
-            Ok((new_message, k_r, _d)) => {
+            Ok((new_message, k_r)) => {
                 // Check message was updated
                 assert_eq!(new_message.hop_count(), 1);
                 assert!(k_r < 3); // Should be one of the 3 users
@@ -2106,7 +2106,7 @@ mod tests {
             Ok(results) => {
                 assert_eq!(results.len(), 3, "Should have 3 forwarded messages");
 
-                for (i, (new_message, k_r, _d)) in results.iter().enumerate() {
+                for (i, (new_message, k_r)) in results.iter().enumerate() {
                     // Check message was updated
                     assert_eq!(new_message.hop_count(), 1);
                     assert!(k_r < &5); // Should be one of the 5 users

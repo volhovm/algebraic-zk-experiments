@@ -125,38 +125,37 @@ fn test_forward_sequential_vs_batch_correctness() {
     // Test 1: Sequential forward with deterministic RNG - 3 hops
     println!("\n=== Running SEQUENTIAL forward (3 hops) ===");
     let mut sequential_rng = rand::rngs::StdRng::seed_from_u64(42);
-    let mut sequential_results: Vec<(_, usize, _)> = Vec::new();
+    let mut sequential_results: Vec<(_, usize)> = Vec::new();
 
     // Hop 1
     println!("  Hop 1...");
     for (user_view, message) in inputs.iter() {
-        let (new_message, next_node_index, diversifier) =
-            forward(&pp, user_view, message, &mut sequential_rng)
-                .expect("Sequential forward hop 1 failed");
-        sequential_results.push((new_message, next_node_index, diversifier));
+        let (new_message, next_node_index) = forward(&pp, user_view, message, &mut sequential_rng)
+            .expect("Sequential forward hop 1 failed");
+        sequential_results.push((new_message, next_node_index));
     }
 
     // Hop 2
     println!("  Hop 2...");
     let mut hop2_results = Vec::new();
-    for (message, current_holder, _diversifier) in sequential_results.iter() {
+    for (message, current_holder) in sequential_results.iter() {
         let current_user_view = &generated_state.users_view[*current_holder];
-        let (new_message, next_node_index, diversifier) =
+        let (new_message, next_node_index) =
             forward(&pp, current_user_view, message, &mut sequential_rng)
                 .expect("Sequential forward hop 2 failed");
-        hop2_results.push((new_message, next_node_index, diversifier));
+        hop2_results.push((new_message, next_node_index));
     }
     sequential_results = hop2_results;
 
     // Hop 3
     println!("  Hop 3...");
     let mut hop3_results = Vec::new();
-    for (message, current_holder, _diversifier) in sequential_results.iter() {
+    for (message, current_holder) in sequential_results.iter() {
         let current_user_view = &generated_state.users_view[*current_holder];
-        let (new_message, next_node_index, diversifier) =
+        let (new_message, next_node_index) =
             forward(&pp, current_user_view, message, &mut sequential_rng)
                 .expect("Sequential forward hop 3 failed");
-        hop3_results.push((new_message, next_node_index, diversifier));
+        hop3_results.push((new_message, next_node_index));
     }
     sequential_results = hop3_results;
 
@@ -168,7 +167,7 @@ fn test_forward_sequential_vs_batch_correctness() {
     // Test 2: Batch forward with same deterministic RNG seed - 3 hops
     println!("\n=== Running BATCH forward (3 hops) ===");
     let mut batch_rng = rand::rngs::StdRng::seed_from_u64(42);
-    let mut batch_results: Vec<(_, usize, _)>;
+    let mut batch_results: Vec<(_, usize)>;
 
     // Hop 1
     println!("  Hop 1...");
@@ -179,7 +178,7 @@ fn test_forward_sequential_vs_batch_correctness() {
     println!("  Hop 2...");
     let batch_inputs_hop2: Vec<_> = batch_results
         .iter()
-        .map(|(msg, holder, _div)| (generated_state.users_view[*holder].clone(), msg.clone()))
+        .map(|(msg, holder)| (generated_state.users_view[*holder].clone(), msg.clone()))
         .collect();
     batch_results =
         forward_batch(&pp, &batch_inputs_hop2, &mut batch_rng).expect("Batch forward hop 2 failed");
@@ -188,7 +187,7 @@ fn test_forward_sequential_vs_batch_correctness() {
     println!("  Hop 3...");
     let batch_inputs_hop3: Vec<_> = batch_results
         .iter()
-        .map(|(msg, holder, _div)| (generated_state.users_view[*holder].clone(), msg.clone()))
+        .map(|(msg, holder)| (generated_state.users_view[*holder].clone(), msg.clone()))
         .collect();
     batch_results =
         forward_batch(&pp, &batch_inputs_hop3, &mut batch_rng).expect("Batch forward hop 3 failed");
@@ -207,7 +206,7 @@ fn test_forward_sequential_vs_batch_correctness() {
     );
 
     // Verify all messages have 3 hops
-    for (i, ((seq_msg, _, _), (batch_msg, _, _))) in sequential_results
+    for (i, ((seq_msg, _), (batch_msg, _))) in sequential_results
         .iter()
         .zip(batch_results.iter())
         .enumerate()
@@ -230,24 +229,16 @@ fn test_forward_sequential_vs_batch_correctness() {
     let mut sequential_receivers = vec![0; 8];
     let mut batch_receivers = vec![0; 8];
 
-    for (i, ((seq_msg, seq_next, seq_div), (batch_msg, batch_next, batch_div))) in
-        sequential_results
-            .iter()
-            .zip(batch_results.iter())
-            .enumerate()
+    for (i, ((seq_msg, seq_next), (batch_msg, batch_next))) in sequential_results
+        .iter()
+        .zip(batch_results.iter())
+        .enumerate()
     {
         // Check that receiver indices match
         assert_eq!(
             seq_next, batch_next,
             "Message {}: receiver index mismatch (sequential={}, batch={})",
             i, seq_next, batch_next
-        );
-
-        // Check that diversifiers match
-        assert_eq!(
-            seq_div.d, batch_div.d,
-            "Message {}: diversifier mismatch",
-            i
         );
 
         // Check that the forwarded messages have the same structure
@@ -318,7 +309,7 @@ fn test_forward_sequential_vs_batch_correctness() {
     println!("  Verifying {} sequential messages...", BATCH_SIZE);
     let sequential_msgs: Vec<_> = sequential_results
         .iter()
-        .map(|(msg, _, _)| msg.clone())
+        .map(|(msg, _)| msg.clone())
         .collect();
     let seq_valid = verify_batch(
         &sequential_msgs,
@@ -333,7 +324,7 @@ fn test_forward_sequential_vs_batch_correctness() {
 
     // Verify batch messages - one by one to find the failure
     println!("  Verifying {} batch messages one by one...", BATCH_SIZE);
-    for (i, (msg, _, _)) in batch_results.iter().enumerate() {
+    for (i, (msg, _)) in batch_results.iter().enumerate() {
         let result = verify_batch(
             std::slice::from_ref(msg),
             generated_state.protocol_state.merkle_tree.root,

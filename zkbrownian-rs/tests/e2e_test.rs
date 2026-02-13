@@ -91,7 +91,7 @@ fn test_basic_forward_protocol() {
 
         let current_user_view = &generated_state.users_view[current_node_index];
 
-        let (new_message, next_node_index, _diversifier) =
+        let (new_message, next_node_index) =
             forward(&pp, current_user_view, &current_message, &mut rng)
                 .expect("Failed to forward message");
 
@@ -222,8 +222,8 @@ fn test_full_protocol_regular() {
     println!("\nStep 2: Initializing bulletin board...");
     let mut bulletin_board = InMemoryBulletinBoard::new();
 
-    // Step 4: Each user spawns 10 packets
-    const NUM_PACKETS_PER_USER: usize = 10;
+    // Step 4: Each user spawns N packets
+    const NUM_PACKETS_PER_USER: usize = 128;
     const TTL: usize = 5;
 
     println!(
@@ -334,9 +334,7 @@ fn test_full_protocol_regular() {
                     .expect("Failed to batch forward messages");
 
                 // Process results: post to bulletin board and queue for next round
-                for (i, (new_message, next_node_index, _diversifier)) in
-                    batch_results.into_iter().enumerate()
-                {
+                for (i, (new_message, next_node_index)) in batch_results.into_iter().enumerate() {
                     let (_msg, origin_user) = &batch_chunk[i];
 
                     // Post to bulletin board
@@ -688,7 +686,11 @@ fn test_full_protocol_concurrent() {
                 }
 
                 // Process all messages we just read
-                for (message, _origin_user) in messages {
+                // First, separate messages by TTL status
+                let mut messages_to_forward = Vec::new();
+                let mut origin_users = Vec::new();
+
+                for (message, origin_user) in messages {
                     let current_hops = message.hop_count();
 
                     // Check if message has reached TTL
@@ -712,28 +714,48 @@ fn test_full_protocol_concurrent() {
                         continue;
                     }
 
-                    // Forward the message (only if under TTL)
+                    // Collect messages that need forwarding
+                    messages_to_forward.push(message);
+                    origin_users.push(origin_user);
+                }
+
+                // Batch forward all messages that haven't reached TTL
+                if !messages_to_forward.is_empty() {
                     let forward_start = Instant::now();
-                    let (new_message, next_node_index, _diversifier) =
-                        forward(&pp_clone, &user_view, &message, &mut rng)
-                            .expect("Failed to forward message");
+
+                    // Prepare batch inputs: (user_view, message) tuples
+                    let batch_inputs: Vec<_> = messages_to_forward
+                        .iter()
+                        .map(|msg| (user_view.clone(), msg.clone()))
+                        .collect();
+
+                    // Forward all messages in batch
+                    let batch_results = forward_batch(&pp_clone, &batch_inputs, &mut rng)
+                        .expect("Failed to batch forward messages");
+
                     total_forward_time += forward_start.elapsed();
 
-                    // Post to bulletin board
-                    let entry = BulletinBoardEntry {
-                        message: new_message.clone(),
-                        receiver_index: next_node_index,
-                        addressed_to: new_message.hops.last().unwrap().ppk.clone(),
-                    };
+                    // Process results: post to bulletin board and queue for next round
+                    for (i, (new_message, next_node_index)) in batch_results.into_iter().enumerate()
+                    {
+                        let origin_user = origin_users[i];
 
-                    bb_clone.lock().unwrap().push(entry);
-                    forwarded_count += 1;
+                        // Post to bulletin board
+                        let entry = BulletinBoardEntry {
+                            message: new_message.clone(),
+                            receiver_index: next_node_index,
+                            addressed_to: new_message.hops.last().unwrap().ppk.clone(),
+                        };
 
-                    // Send to next node's queue
-                    message_queues_clone[next_node_index]
-                        .lock()
-                        .unwrap()
-                        .push((new_message.clone(), _origin_user));
+                        bb_clone.lock().unwrap().push(entry);
+                        forwarded_count += 1;
+
+                        // Send to next node's queue
+                        message_queues_clone[next_node_index]
+                            .lock()
+                            .unwrap()
+                            .push((new_message.clone(), origin_user));
+                    }
                 }
             }
 

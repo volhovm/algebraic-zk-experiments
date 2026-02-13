@@ -39,7 +39,7 @@ fn batch_verification_benchmark(c: &mut Criterion) {
         let mut current_node_index = spawner_index;
         for _ in 0..TTL {
             let current_user_view = &generated_state.users_view[current_node_index];
-            let (new_message, next_node_index, _diversifier) =
+            let (new_message, next_node_index) =
                 forward(&pp, current_user_view, &message, &mut rng)
                     .expect("Failed to forward message");
 

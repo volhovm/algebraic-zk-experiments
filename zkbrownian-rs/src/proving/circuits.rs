@@ -579,15 +579,6 @@ pub fn prove_schnorr_bridging_batch(
         })
         .collect();
 
-    // Debug: print circuit size of first prover
-    if !provers.is_empty() {
-        let metrics = provers[0].metrics();
-        eprintln!(
-            "DEBUG prove_schnorr_bridging_batch: multipliers={}, constraints={}, table.n1={}",
-            metrics.multipliers, metrics.constraints, tables.n1
-        );
-    }
-
     // 2. Batch prove using precomputed tables
     let proofs = prove_batch(provers, bp_gens, tables)
         .map_err(|e| ProtocolError::CryptoError(format!("Batch proving failed: {:?}", e)))?;
