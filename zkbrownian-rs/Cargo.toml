@@ -1,3 +1,6 @@
+[workspace]
+members = ["simulator"]
+
 [package]
 name = "zkbrownian"
 version = "0.1.0"
