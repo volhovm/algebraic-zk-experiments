@@ -87,18 +87,18 @@ struct ServerState {
 
 type SharedState = Arc<Mutex<ServerState>>;
 
-/// GET /poll — drain phone node's queue, return Work/NoWork/Done
-async fn handle_poll(State(state): State<SharedState>) -> Json<PollResponse> {
+/// GET /poll — drain phone node's queue, return Work/NoWork/Done (bincode)
+async fn handle_poll(State(state): State<SharedState>) -> Vec<u8> {
     let mut s = state.lock().await;
 
     if s.done {
-        return Json(PollResponse::Done);
+        return bincode::serialize(&PollResponse::Done).expect("Failed to serialize PollResponse");
     }
 
     let phone_node = s.phone_node;
     let phone_queue = &mut s.queues[phone_node];
     if phone_queue.is_empty() {
-        Json(PollResponse::NoWork)
+        bincode::serialize(&PollResponse::NoWork).expect("Failed to serialize PollResponse")
     } else {
         let messages: Vec<Message> = std::mem::take(phone_queue);
         println!(
@@ -107,15 +107,17 @@ async fn handle_poll(State(state): State<SharedState>) -> Json<PollResponse> {
             s.total_completed,
             s.total_expected
         );
-        Json(PollResponse::Work(messages))
+        bincode::serialize(&PollResponse::Work(messages)).expect("Failed to serialize PollResponse")
     }
 }
 
-/// POST /result — accept BatchForwardResult from phone, distribute messages
+/// POST /result — accept BatchForwardResult from phone (bincode), distribute messages
 async fn handle_result(
     State(state): State<SharedState>,
-    Json(result): Json<BatchForwardResult>,
+    body: axum::body::Bytes,
 ) -> Json<serde_json::Value> {
+    let result: BatchForwardResult =
+        bincode::deserialize(&body).expect("Failed to deserialize BatchForwardResult");
     let mut s = state.lock().await;
 
     // Count finalized messages from the phone (reached TTL)
@@ -205,12 +207,9 @@ async fn handle_benchmark(
     );
 
     println!("\n  --- Serialization ---");
+    println!("  Poll deser:   {:.1} ms total", report.total_poll_deser_ms,);
     println!(
-        "  Poll JSON deser:   {:.1} ms total",
-        report.total_poll_deser_ms,
-    );
-    println!(
-        "  Result JSON ser:   {:.1} ms total, {:.1} ms/batch",
+        "  Result ser:   {:.1} ms total, {:.1} ms/batch",
         report.total_result_ser_ms,
         safe_div(report.total_result_ser_ms, report.num_batches),
     );

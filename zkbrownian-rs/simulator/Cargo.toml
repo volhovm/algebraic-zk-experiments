@@ -18,3 +18,4 @@ ark-ff = { git = "https://github.com/arkworks-rs/algebra.git" }
 ark-ed-on-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git" }
 rand = "0.8"
 anyhow = "1"
+bincode = "1.3"

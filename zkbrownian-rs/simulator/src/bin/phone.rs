@@ -158,7 +158,9 @@ fn main() {
         let poll_http_ms = http_start.elapsed().as_secs_f64() * 1000.0;
 
         let deser_start = Instant::now();
-        let poll_response: PollResponse = resp.json().expect("Failed to parse poll response");
+        let poll_bytes = resp.bytes().expect("Failed to read poll response bytes");
+        let poll_response: PollResponse =
+            bincode::deserialize(&poll_bytes).expect("Failed to deserialize poll response");
         let poll_deser_ms = deser_start.elapsed().as_secs_f64() * 1000.0;
 
         total_poll_http_ms += poll_http_ms;
@@ -279,9 +281,9 @@ fn main() {
     );
 
     println!("\n  --- Serialization ---");
-    println!("  Poll JSON deser:   {:.1} ms total", total_poll_deser_ms,);
+    println!("  Poll deser:   {:.1} ms total", total_poll_deser_ms,);
     println!(
-        "  Result JSON ser:   {:.1} ms total, {:.1} ms/batch",
+        "  Result ser:   {:.1} ms total, {:.1} ms/batch",
         total_result_ser_ms,
         safe_div(total_result_ser_ms, batch_timings.len()),
     );
@@ -415,7 +417,7 @@ fn process_batch(
 
     *total_forward_ms += forward_ms;
 
-    // JSON-serialize the result
+    // Bincode-serialize the result
     let result = BatchForwardResult {
         results,
         messages_finalized: finalized,
@@ -424,19 +426,19 @@ fn process_batch(
     };
 
     let ser_start = Instant::now();
-    let json_body = serde_json::to_vec(&result).expect("Failed to serialize result");
+    let body = bincode::serialize(&result).expect("Failed to serialize result");
     let ser_ms = ser_start.elapsed().as_secs_f64() * 1000.0;
     *total_result_ser_ms += ser_ms;
 
-    let json_bytes = json_body.len();
+    let body_bytes = body.len();
 
     // POST result back to server
     let http_start = Instant::now();
     let result_url = format!("{}/result", server_url);
     if let Err(e) = client
         .post(&result_url)
-        .header("Content-Type", "application/json")
-        .body(json_body)
+        .header("Content-Type", "application/octet-stream")
+        .body(body)
         .send()
     {
         eprintln!("  Warning: failed to post result: {}", e);
@@ -451,7 +453,7 @@ fn process_batch(
         forward_ms,
         safe_div(forward_ms, num_to_forward),
         ser_ms,
-        json_bytes as f64 / 1024.0,
+        body_bytes as f64 / 1024.0,
         http_ms,
         num_to_forward,
         finalized,
