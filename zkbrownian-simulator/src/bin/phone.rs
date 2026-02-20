@@ -142,6 +142,7 @@ fn main() {
     let mut total_poll_deser_ms = 0.0f64;
     let mut total_result_ser_ms = 0.0f64;
     let mut total_result_http_ms = 0.0f64;
+    let mut total_polls = 0usize;
 
     println!("\nStarting poll loop...");
     let overall_start = Instant::now();
@@ -149,6 +150,8 @@ fn main() {
     loop {
         // Poll server — measure HTTP round-trip and JSON deserialization separately
         let poll_url = format!("{}/poll", cli.server_url);
+
+        total_polls += 1;
 
         let http_start = Instant::now();
         let resp = client.get(&poll_url).send().expect("Failed to poll server");
@@ -267,8 +270,7 @@ fn main() {
     println!("\n  --- HTTP/network ---");
     println!(
         "  Poll HTTP:   {:.1} ms total ({} calls)",
-        total_poll_http_ms,
-        batch_timings.len(), // approximate — includes NoWork polls too
+        total_poll_http_ms, total_polls,
     );
     println!(
         "  Result HTTP: {:.1} ms total, {:.1} ms/batch",
