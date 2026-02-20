@@ -42,7 +42,7 @@ struct Cli {
     #[arg(long, default_value = "16")]
     packets_per_node: usize,
 
-    /// Time-to-live: messages at this hop count are dropped
+    /// Time-to-live: messages at this hop count are finalized
     #[arg(long, default_value = "5")]
     ttl: usize,
 
@@ -67,8 +67,10 @@ struct ServerState {
 
     /// Total messages expected = num_nodes * packets_per_node
     total_expected: usize,
-    /// Messages that have completed (reached TTL and were dropped)
+    /// Messages that have completed (reached TTL, finalized)
     total_completed: usize,
+    /// Per-node count of finalized packets
+    finalized_per_node: Vec<usize>,
     /// Whether the protocol is done
     done: bool,
     /// Whether /start has been called
@@ -116,8 +118,10 @@ async fn handle_result(
 ) -> Json<serde_json::Value> {
     let mut s = state.lock().await;
 
-    // Count dropped messages from the phone
-    s.total_completed += result.messages_dropped;
+    // Count finalized messages from the phone (reached TTL)
+    let phone_node = s.phone_node;
+    s.total_completed += result.messages_finalized;
+    s.finalized_per_node[phone_node] += result.messages_finalized;
 
     // Distribute forwarded messages to destination queues
     let mut forwarded = 0;
@@ -127,9 +131,9 @@ async fn handle_result(
     }
 
     println!(
-        "  [result] Phone batch: {} forwarded, {} dropped (verify={:.1}ms, fwd={:.1}ms) [{} / {} completed]",
+        "  [result] Phone batch: {} forwarded, {} finalized (verify={:.1}ms, fwd={:.1}ms) [{} / {} completed]",
         forwarded,
-        result.messages_dropped,
+        result.messages_finalized,
         result.verify_time_ms,
         result.forward_time_ms,
         s.total_completed,
@@ -138,7 +142,7 @@ async fn handle_result(
 
     if s.total_completed >= s.total_expected {
         s.done = true;
-        println!("\n=== All messages completed! ===");
+        print_finalized_summary(&s);
     }
 
     Json(serde_json::json!({"status": "ok"}))
@@ -160,43 +164,71 @@ async fn handle_benchmark(
     State(state): State<SharedState>,
     Json(report): Json<BenchmarkReport>,
 ) -> Json<serde_json::Value> {
+    let safe_div = |n: f64, d: usize| -> f64 {
+        if d > 0 {
+            n / d as f64
+        } else {
+            0.0
+        }
+    };
+
     println!("\n=== Benchmark Report from Phone ===");
     println!("  Batches: {}", report.num_batches);
     println!("  Messages verified: {}", report.total_messages_verified);
     println!("  Messages forwarded: {}", report.total_messages_forwarded);
     println!(
-        "  Messages dropped (TTL): {}",
-        report.total_messages_dropped
+        "  Messages finalized (reached TTL): {}",
+        report.total_messages_finalized
     );
+
+    println!("\n  --- Crypto ---");
     println!(
-        "  Total verify time: {:.2} ms ({:.2} ms/msg)",
+        "  Verify:  {:.1} ms total, {:.2} ms/msg",
         report.total_verify_time_ms,
-        if report.total_messages_verified > 0 {
-            report.total_verify_time_ms / report.total_messages_verified as f64
-        } else {
-            0.0
-        }
+        safe_div(report.total_verify_time_ms, report.total_messages_verified),
     );
     println!(
-        "  Total forward time: {:.2} ms ({:.2} ms/msg)",
+        "  Forward: {:.1} ms total, {:.2} ms/msg",
         report.total_forward_time_ms,
-        if report.total_messages_forwarded > 0 {
-            report.total_forward_time_ms / report.total_messages_forwarded as f64
-        } else {
-            0.0
-        }
+        safe_div(
+            report.total_forward_time_ms,
+            report.total_messages_forwarded
+        ),
+    );
+
+    println!("\n  --- HTTP/network ---");
+    println!("  Poll HTTP:   {:.1} ms total", report.total_poll_http_ms);
+    println!(
+        "  Result HTTP: {:.1} ms total, {:.1} ms/batch",
+        report.total_result_http_ms,
+        safe_div(report.total_result_http_ms, report.num_batches),
+    );
+
+    println!("\n  --- Serialization ---");
+    println!(
+        "  Poll JSON deser:   {:.1} ms total",
+        report.total_poll_deser_ms,
+    );
+    println!(
+        "  Result JSON ser:   {:.1} ms total, {:.1} ms/batch",
+        report.total_result_ser_ms,
+        safe_div(report.total_result_ser_ms, report.num_batches),
     );
 
     if !report.per_batch.is_empty() {
-        println!("\n  Per-batch timings:");
+        println!("\n  --- Per-batch breakdown ---");
         for (i, bt) in report.per_batch.iter().enumerate() {
             println!(
-                "    [{:>3}] size={:>4}, verify={:.1}ms, fwd={:.1}ms, dropped={}",
+                "    [{:>3}] verified={:>4}  verify={:.1}ms ({:.2}ms/msg)  fwd={:.1}ms ({:.2}ms/msg)  ser={:.1}ms  http={:.1}ms  finalized={}",
                 i + 1,
                 bt.batch_size,
                 bt.verify_time_ms,
+                safe_div(bt.verify_time_ms, bt.batch_size),
                 bt.forward_time_ms,
-                bt.messages_dropped,
+                safe_div(bt.forward_time_ms, bt.messages_forwarded),
+                bt.result_ser_ms,
+                bt.result_http_ms,
+                bt.messages_finalized,
             );
         }
     }
@@ -219,6 +251,21 @@ async fn handle_status(State(state): State<SharedState>) -> Json<serde_json::Val
         "done": s.done,
         "started": s.started,
     }))
+}
+
+fn print_finalized_summary(s: &ServerState) {
+    println!("\n=== All messages completed! ===");
+    println!("\n  Finalized packets per node:");
+    let total: usize = s.finalized_per_node.iter().sum();
+    for (node_idx, &count) in s.finalized_per_node.iter().enumerate() {
+        let is_phone = if node_idx == s.phone_node {
+            " (phone)"
+        } else {
+            ""
+        };
+        println!("    Node {}: {}{}", node_idx, count, is_phone);
+    }
+    println!("    Total: {} (expected {})", total, s.total_expected);
 }
 
 /// Background processing loop: process non-phone nodes sequentially
@@ -286,7 +333,7 @@ async fn processing_loop(state: SharedState) {
 
         let round_start = Instant::now();
         let mut round_forwards = 0;
-        let mut round_drops = 0;
+        let mut round_finalized = 0;
 
         // Process each non-phone node sequentially
         for node_idx in 0..num_nodes {
@@ -325,19 +372,19 @@ async fn processing_loop(state: SharedState) {
             .expect("Batch verification failed");
             assert!(all_valid, "Node {} received invalid messages", node_idx);
 
-            // Separate: messages at TTL → drop, rest → forward
+            // Separate: messages at TTL → finalized, rest → forward
             let mut to_forward = Vec::new();
-            let mut dropped = 0;
+            let mut finalized = 0;
 
             for msg in messages {
                 if msg.hop_count() >= ttl {
-                    dropped += 1;
+                    finalized += 1;
                 } else {
                     to_forward.push(msg);
                 }
             }
 
-            round_drops += dropped;
+            round_finalized += finalized;
 
             // Batch forward remaining
             if !to_forward.is_empty() {
@@ -370,10 +417,11 @@ async fn processing_loop(state: SharedState) {
             // Update completed count
             {
                 let mut s = state.lock().await;
-                s.total_completed += dropped;
+                s.total_completed += finalized;
+                s.finalized_per_node[node_idx] += finalized;
                 if s.total_completed >= s.total_expected {
                     s.done = true;
-                    println!("\n=== All messages completed! ===");
+                    print_finalized_summary(&s);
                     return;
                 }
             }
@@ -389,12 +437,12 @@ async fn processing_loop(state: SharedState) {
             )
         };
 
-        if round_forwards > 0 || round_drops > 0 {
+        if round_forwards > 0 || round_finalized > 0 {
             println!(
-                "  [round {:>3}] {} forwards, {} drops in {:.1}ms (phone_queue={}, {}/{} completed)",
+                "  [round {:>3}] {} forwards, {} finalized in {:.1}ms (phone_queue={}, {}/{} completed)",
                 round,
                 round_forwards,
-                round_drops,
+                round_finalized,
                 round_elapsed.as_secs_f64() * 1000.0,
                 phone_queue_size,
                 total_completed,
@@ -498,6 +546,7 @@ async fn main() {
         queues,
         total_expected,
         total_completed: 0,
+        finalized_per_node: vec![0; cli.num_nodes],
         done: false,
         started: false,
         merkle_root,

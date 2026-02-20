@@ -8,8 +8,8 @@ use zkbrownian::types::Message;
 pub struct BatchForwardResult {
     /// (new_message, next_hop_index) pairs
     pub results: Vec<(Message, usize)>,
-    /// Number of messages that reached TTL and were dropped
-    pub messages_dropped: usize,
+    /// Number of messages that reached TTL (completed their random walk)
+    pub messages_finalized: usize,
     /// Timing: how long batch_verify took (ms)
     pub verify_time_ms: f64,
     /// Timing: how long batch_forward took (ms)
@@ -33,16 +33,33 @@ pub struct BenchmarkReport {
     pub num_batches: usize,
     pub total_messages_verified: usize,
     pub total_messages_forwarded: usize,
-    pub total_messages_dropped: usize,
+    pub total_messages_finalized: usize,
+    /// Crypto timings
     pub total_verify_time_ms: f64,
     pub total_forward_time_ms: f64,
+    /// HTTP/network timings
+    pub total_poll_http_ms: f64,
+    pub total_result_http_ms: f64,
+    /// JSON serialization timings
+    pub total_poll_deser_ms: f64,
+    pub total_result_ser_ms: f64,
+    /// Per-batch breakdown
     pub per_batch: Vec<BatchTiming>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BatchTiming {
+    /// Total messages received and verified in this batch
     pub batch_size: usize,
+    /// Messages that were forwarded (hop_count < TTL)
+    pub messages_forwarded: usize,
+    /// Messages that reached TTL (completed their random walk)
+    pub messages_finalized: usize,
+    /// Crypto
     pub verify_time_ms: f64,
     pub forward_time_ms: f64,
-    pub messages_dropped: usize,
+    /// Serialization: JSON-encode BatchForwardResult
+    pub result_ser_ms: f64,
+    /// HTTP: POST /result round-trip
+    pub result_http_ms: f64,
 }
