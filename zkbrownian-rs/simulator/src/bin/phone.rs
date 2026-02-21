@@ -182,7 +182,8 @@ fn main() {
                 if !buffer.is_empty() && last_process_time.elapsed() >= batch_timeout {
                     // Fall through to processing below
                 } else {
-                    std::thread::sleep(Duration::from_millis(cli.poll_interval_ms));
+                    // Server uses long-polling (~500ms), so NoWork means it already
+                    // waited — just retry immediately.
                     continue;
                 }
             }

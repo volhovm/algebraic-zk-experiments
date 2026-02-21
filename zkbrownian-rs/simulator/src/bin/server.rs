@@ -15,7 +15,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use clap::Parser;
 use rand::thread_rng;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 
 use zkbrownian::protocol::{
     forward_batch, generate_random_state, spawn, verify_batch, GeneratedState, UserView,
@@ -81,33 +81,59 @@ struct ServerState {
     all_public_keys: Vec<PublicKey>,
     weight_commitment: WeightCommitment,
 
+    /// Notified when phone's queue gets new messages (for long-polling)
+    phone_notify: Arc<Notify>,
     /// Shutdown signal — notified after benchmark report is received
     shutdown: Arc<tokio::sync::Notify>,
 }
 
 type SharedState = Arc<Mutex<ServerState>>;
 
-/// GET /poll — drain phone node's queue, return Work/NoWork/Done (bincode)
+/// GET /poll — long-poll: wait for messages in phone's queue (up to 500ms),
+/// return Work/NoWork/Done (bincode). Serialization happens outside the lock.
 async fn handle_poll(State(state): State<SharedState>) -> Vec<u8> {
-    let mut s = state.lock().await;
+    let phone_notify = state.lock().await.phone_notify.clone();
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_millis(500);
 
-    if s.done {
-        return bincode::serialize(&PollResponse::Done).expect("Failed to serialize PollResponse");
-    }
+    loop {
+        let result = {
+            let mut s = state.lock().await;
+            if s.done {
+                Some(PollResponse::Done)
+            } else {
+                let phone_node = s.phone_node;
+                if !s.queues[phone_node].is_empty() {
+                    let messages = std::mem::take(&mut s.queues[phone_node]);
+                    println!(
+                        "  [poll] Sending {} messages to phone ({} completed / {} total)",
+                        messages.len(),
+                        s.total_completed,
+                        s.total_expected
+                    );
+                    Some(PollResponse::Work(messages))
+                } else {
+                    None
+                }
+            }
+        };
+        // Lock dropped — serialize outside the lock
+        if let Some(resp) = result {
+            return bincode::serialize(&resp).expect("Failed to serialize PollResponse");
+        }
 
-    let phone_node = s.phone_node;
-    let phone_queue = &mut s.queues[phone_node];
-    if phone_queue.is_empty() {
-        bincode::serialize(&PollResponse::NoWork).expect("Failed to serialize PollResponse")
-    } else {
-        let messages: Vec<Message> = std::mem::take(phone_queue);
-        println!(
-            "  [poll] Sending {} messages to phone ({} completed / {} total)",
-            messages.len(),
-            s.total_completed,
-            s.total_expected
-        );
-        bincode::serialize(&PollResponse::Work(messages)).expect("Failed to serialize PollResponse")
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return bincode::serialize(&PollResponse::NoWork)
+                .expect("Failed to serialize PollResponse");
+        }
+
+        tokio::select! {
+            _ = phone_notify.notified() => {}
+            _ = tokio::time::sleep(remaining) => {
+                return bincode::serialize(&PollResponse::NoWork)
+                    .expect("Failed to serialize PollResponse");
+            }
+        }
     }
 }
 
@@ -145,6 +171,7 @@ async fn handle_result(
     if s.total_completed >= s.total_expected {
         s.done = true;
         print_finalized_summary(&s);
+        s.phone_notify.notify_one();
     }
 
     Json(serde_json::json!({"status": "ok"}))
@@ -280,6 +307,8 @@ async fn processing_loop(state: SharedState) {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
 
+    let phone_notify = state.lock().await.phone_notify.clone();
+
     // Spawn initial packets into queues
     {
         let mut s = state.lock().await;
@@ -310,6 +339,7 @@ async fn processing_loop(state: SharedState) {
             s.total_expected, num_nodes
         );
     }
+    phone_notify.notify_one();
 
     // Main processing loop
     let mut round = 0;
@@ -404,12 +434,19 @@ async fn processing_loop(state: SharedState) {
                 };
 
                 // Distribute results to destination node queues
+                let mut phone_got_messages = false;
                 {
                     let mut s = state.lock().await;
                     for (new_message, next_node) in batch_results {
+                        if next_node == phone_node {
+                            phone_got_messages = true;
+                        }
                         s.queues[next_node].push(new_message);
                         round_forwards += 1;
                     }
+                }
+                if phone_got_messages {
+                    phone_notify.notify_one();
                 }
             }
 
@@ -421,6 +458,8 @@ async fn processing_loop(state: SharedState) {
                 if s.total_completed >= s.total_expected {
                     s.done = true;
                     print_finalized_summary(&s);
+                    drop(s);
+                    phone_notify.notify_one();
                     return;
                 }
             }
@@ -535,6 +574,7 @@ async fn main() {
     let pp = Arc::new(pp);
     let queues: Vec<Vec<Message>> = (0..cli.num_nodes).map(|_| Vec::new()).collect();
 
+    let phone_notify = Arc::new(Notify::new());
     let shutdown = Arc::new(tokio::sync::Notify::new());
 
     let server_state = ServerState {
@@ -548,6 +588,7 @@ async fn main() {
         finalized_per_node: vec![0; cli.num_nodes],
         done: false,
         started: false,
+        phone_notify,
         merkle_root,
         all_public_keys,
         weight_commitment,
