@@ -3,17 +3,19 @@
 //! Runs on the PC, emulates all non-phone nodes, orchestrates routing,
 //! collects benchmark timings from the phone.
 //!
-//! Matches the logic from test_full_protocol_regular (server side) and
-//! test_full_protocol_concurrent (phone side).
+//! Uses a single WebSocket endpoint (/ws) for all phone communication.
 
 use std::sync::Arc;
 use std::time::Instant;
 
-use axum::extract::DefaultBodyLimit;
+use axum::extract::ws::{Message as WsMessage, WebSocket};
 use axum::extract::State;
-use axum::routing::{get, post};
+use axum::extract::WebSocketUpgrade;
+use axum::response::IntoResponse;
+use axum::routing::get;
 use axum::{Json, Router};
 use clap::Parser;
+use futures_util::{SinkExt, StreamExt};
 use rand::thread_rng;
 use tokio::sync::{Mutex, Notify};
 
@@ -24,7 +26,7 @@ use zkbrownian::types::{Message, PublicKey, PublicParams, ScalarField, WeightCom
 use zkbrownian_simulator::serialization::{
     serialize_public_params, serialize_user_view, serialize_verification_data,
 };
-use zkbrownian_simulator::{BatchForwardResult, BenchmarkReport, PollResponse};
+use zkbrownian_simulator::{BenchmarkReport, PhoneMsg, ServerMsg};
 
 #[derive(Parser)]
 #[command(name = "zkbrownian-server")]
@@ -53,9 +55,13 @@ struct Cli {
     /// Directory to write setup data files
     #[arg(long, default_value = "./setup-data")]
     setup_dir: String,
+
+    /// Maximum batch size for processing / sending
+    #[arg(long, default_value = "64")]
+    max_batch_size: usize,
 }
 
-/// Server state shared across HTTP handlers and the background processing loop
+/// Server state shared across handlers and the background processing loop
 struct ServerState {
     pp: Arc<PublicParams>,
     generated_state: GeneratedState,
@@ -81,7 +87,10 @@ struct ServerState {
     all_public_keys: Vec<PublicKey>,
     weight_commitment: WeightCommitment,
 
-    /// Notified when phone's queue gets new messages (for long-polling)
+    /// Maximum batch size for processing / sending
+    max_batch_size: usize,
+
+    /// Notified when phone's queue gets new messages
     phone_notify: Arc<Notify>,
     /// Shutdown signal — notified after benchmark report is received
     shutdown: Arc<tokio::sync::Notify>,
@@ -89,110 +98,148 @@ struct ServerState {
 
 type SharedState = Arc<Mutex<ServerState>>;
 
-/// GET /poll — long-poll: wait for messages in phone's queue (up to 500ms),
-/// return Work/NoWork/Done (bincode). Serialization happens outside the lock.
-async fn handle_poll(State(state): State<SharedState>) -> Vec<u8> {
-    let phone_notify = state.lock().await.phone_notify.clone();
-    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_millis(500);
+/// GET /ws — upgrade to WebSocket
+async fn handle_ws_upgrade(
+    ws: WebSocketUpgrade,
+    State(state): State<SharedState>,
+) -> impl IntoResponse {
+    ws.max_frame_size(256 * 1024 * 1024)
+        .max_message_size(256 * 1024 * 1024)
+        .on_upgrade(move |socket| handle_ws_connection(socket, state))
+}
 
-    loop {
-        let result = {
-            let mut s = state.lock().await;
-            if s.done {
-                Some(PollResponse::Done)
-            } else {
+/// Handle the WebSocket connection with the phone
+async fn handle_ws_connection(socket: WebSocket, state: SharedState) {
+    let (mut ws_sender, mut ws_receiver) = socket.split();
+
+    let phone_notify = state.lock().await.phone_notify.clone();
+    let shutdown = state.lock().await.shutdown.clone();
+
+    // Writer task: pushes work to phone when phone_notify fires
+    let state_writer = state.clone();
+    let writer_handle = tokio::spawn(async move {
+        loop {
+            phone_notify.notified().await;
+
+            let msg = {
+                let mut s = state_writer.lock().await;
                 let phone_node = s.phone_node;
-                if !s.queues[phone_node].is_empty() {
-                    let messages = std::mem::take(&mut s.queues[phone_node]);
+                let max_batch = s.max_batch_size;
+                let queue_len = s.queues[phone_node].len();
+
+                if queue_len > 0 {
+                    let drain_count = queue_len.min(max_batch);
+                    let messages: Vec<Message> =
+                        s.queues[phone_node].drain(..drain_count).collect();
+                    let remaining = s.queues[phone_node].len();
+                    let is_done = s.done;
+
+                    if remaining > 0 || (is_done && remaining == 0) {
+                        // Self-notify: more messages to send, or need to send Done next
+                        s.phone_notify.notify_one();
+                    }
+
                     println!(
-                        "  [poll] Sending {} messages to phone ({} completed / {} total)",
+                        "  [ws] Sending {} messages to phone ({} remaining, {} / {} completed)",
                         messages.len(),
+                        remaining,
                         s.total_completed,
                         s.total_expected
                     );
-                    Some(PollResponse::Work(messages))
+                    Some(ServerMsg::Work(messages))
+                } else if s.done {
+                    Some(ServerMsg::Done)
                 } else {
                     None
                 }
+            };
+
+            if let Some(server_msg) = msg {
+                let is_done = matches!(server_msg, ServerMsg::Done);
+                let bytes = bincode::serialize(&server_msg).expect("Failed to serialize ServerMsg");
+                if ws_sender
+                    .send(WsMessage::Binary(bytes.into()))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+                if is_done {
+                    break;
+                }
+            }
+        }
+    });
+
+    // Reader loop: receives PhoneMsg from phone
+    while let Some(Ok(ws_msg)) = ws_receiver.next().await {
+        let data = match ws_msg {
+            WsMessage::Binary(b) => b,
+            WsMessage::Close(_) => break,
+            _ => continue,
+        };
+
+        let phone_msg: PhoneMsg = match bincode::deserialize(&data) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("  [ws] Failed to deserialize PhoneMsg: {}", e);
+                continue;
             }
         };
-        // Lock dropped — serialize outside the lock
-        if let Some(resp) = result {
-            return bincode::serialize(&resp).expect("Failed to serialize PollResponse");
-        }
 
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            return bincode::serialize(&PollResponse::NoWork)
-                .expect("Failed to serialize PollResponse");
-        }
+        match phone_msg {
+            PhoneMsg::Start => {
+                let mut s = state.lock().await;
+                if !s.started {
+                    s.started = true;
+                    println!("\n=== Phone connected via WebSocket, starting protocol ===");
+                }
+            }
+            PhoneMsg::Result(result) => {
+                let mut s = state.lock().await;
 
-        tokio::select! {
-            _ = phone_notify.notified() => {}
-            _ = tokio::time::sleep(remaining) => {
-                return bincode::serialize(&PollResponse::NoWork)
-                    .expect("Failed to serialize PollResponse");
+                // Count finalized messages
+                let phone_node = s.phone_node;
+                s.total_completed += result.messages_finalized;
+                s.finalized_per_node[phone_node] += result.messages_finalized;
+
+                // Distribute forwarded messages
+                let mut forwarded = 0;
+                for (message, next_node) in result.results {
+                    s.queues[next_node].push(message);
+                    forwarded += 1;
+                }
+
+                println!(
+                    "  [ws-result] Phone batch: {} forwarded, {} finalized (verify={:.1}ms, fwd={:.1}ms) [{} / {} completed]",
+                    forwarded,
+                    result.messages_finalized,
+                    result.verify_time_ms,
+                    result.forward_time_ms,
+                    s.total_completed,
+                    s.total_expected,
+                );
+
+                if s.total_completed >= s.total_expected {
+                    s.done = true;
+                    print_finalized_summary(&s);
+                    s.phone_notify.notify_one();
+                }
+            }
+            PhoneMsg::Benchmark(report) => {
+                print_benchmark_report(&report);
+                // Trigger shutdown
+                shutdown.notify_one();
+                break;
             }
         }
     }
+
+    // Clean up writer task
+    writer_handle.abort();
 }
 
-/// POST /result — accept BatchForwardResult from phone (bincode), distribute messages
-async fn handle_result(
-    State(state): State<SharedState>,
-    body: axum::body::Bytes,
-) -> Json<serde_json::Value> {
-    let result: BatchForwardResult =
-        bincode::deserialize(&body).expect("Failed to deserialize BatchForwardResult");
-    let mut s = state.lock().await;
-
-    // Count finalized messages from the phone (reached TTL)
-    let phone_node = s.phone_node;
-    s.total_completed += result.messages_finalized;
-    s.finalized_per_node[phone_node] += result.messages_finalized;
-
-    // Distribute forwarded messages to destination queues
-    let mut forwarded = 0;
-    for (message, next_node) in result.results {
-        s.queues[next_node].push(message);
-        forwarded += 1;
-    }
-
-    println!(
-        "  [result] Phone batch: {} forwarded, {} finalized (verify={:.1}ms, fwd={:.1}ms) [{} / {} completed]",
-        forwarded,
-        result.messages_finalized,
-        result.verify_time_ms,
-        result.forward_time_ms,
-        s.total_completed,
-        s.total_expected,
-    );
-
-    if s.total_completed >= s.total_expected {
-        s.done = true;
-        print_finalized_summary(&s);
-        s.phone_notify.notify_one();
-    }
-
-    Json(serde_json::json!({"status": "ok"}))
-}
-
-/// POST /start — trigger the processing loop
-async fn handle_start(State(state): State<SharedState>) -> Json<serde_json::Value> {
-    let mut s = state.lock().await;
-    if s.started {
-        return Json(serde_json::json!({"status": "already_started"}));
-    }
-    s.started = true;
-    println!("\n=== Phone connected, starting protocol ===");
-    Json(serde_json::json!({"status": "ok"}))
-}
-
-/// POST /benchmark — accept and print BenchmarkReport from phone, then trigger shutdown
-async fn handle_benchmark(
-    State(state): State<SharedState>,
-    Json(report): Json<BenchmarkReport>,
-) -> Json<serde_json::Value> {
+fn print_benchmark_report(report: &BenchmarkReport) {
     let safe_div = |n: f64, d: usize| -> f64 {
         if d > 0 {
             n / d as f64
@@ -225,16 +272,16 @@ async fn handle_benchmark(
         ),
     );
 
-    println!("\n  --- HTTP/network ---");
-    println!("  Poll HTTP:   {:.1} ms total", report.total_poll_http_ms);
+    println!("\n  --- WS/network ---");
+    println!("  WS recv:   {:.1} ms total", report.total_ws_recv_ms);
     println!(
-        "  Result HTTP: {:.1} ms total, {:.1} ms/batch",
-        report.total_result_http_ms,
-        safe_div(report.total_result_http_ms, report.num_batches),
+        "  WS send:   {:.1} ms total, {:.1} ms/batch",
+        report.total_ws_send_ms,
+        safe_div(report.total_ws_send_ms, report.num_batches),
     );
 
     println!("\n  --- Serialization ---");
-    println!("  Poll deser:   {:.1} ms total", report.total_poll_deser_ms,);
+    println!("  Recv deser:   {:.1} ms total", report.total_recv_deser_ms);
     println!(
         "  Result ser:   {:.1} ms total, {:.1} ms/batch",
         report.total_result_ser_ms,
@@ -245,7 +292,7 @@ async fn handle_benchmark(
         println!("\n  --- Per-batch breakdown ---");
         for (i, bt) in report.per_batch.iter().enumerate() {
             println!(
-                "    [{:>3}] verified={:>4}  verify={:.1}ms ({:.2}ms/msg)  fwd={:.1}ms ({:.2}ms/msg)  ser={:.1}ms  http={:.1}ms  finalized={}",
+                "    [{:>3}] verified={:>4}  verify={:.1}ms ({:.2}ms/msg)  fwd={:.1}ms ({:.2}ms/msg)  ser={:.1}ms  ws={:.1}ms  finalized={}",
                 i + 1,
                 bt.batch_size,
                 bt.verify_time_ms,
@@ -253,17 +300,11 @@ async fn handle_benchmark(
                 bt.forward_time_ms,
                 safe_div(bt.forward_time_ms, bt.messages_forwarded),
                 bt.result_ser_ms,
-                bt.result_http_ms,
+                bt.result_ws_ms,
                 bt.messages_finalized,
             );
         }
     }
-
-    // Trigger graceful shutdown after responding
-    let shutdown = state.lock().await.shutdown.clone();
-    shutdown.notify_one();
-
-    Json(serde_json::json!({"status": "ok"}))
 }
 
 /// GET /status — progress info
@@ -296,7 +337,7 @@ fn print_finalized_summary(s: &ServerState) {
 
 /// Background processing loop: process non-phone nodes sequentially
 async fn processing_loop(state: SharedState) {
-    // Wait for /start
+    // Wait for start
     loop {
         {
             let s = state.lock().await;
@@ -318,7 +359,15 @@ async fn processing_loop(state: SharedState) {
         let num_nodes = s.generated_state.users_view.len();
         let packets_per_node = s.total_expected / num_nodes;
 
+        let phone_node = s.phone_node;
         for user_idx in 0..num_nodes {
+            if user_idx == phone_node {
+                println!(
+                    "  Node {} (phone) — will spawn {} packets locally",
+                    user_idx, packets_per_node
+                );
+                continue;
+            }
             let sk = s.generated_state.users_view[user_idx].secret_key.clone();
             let pk = s.generated_state.users_view[user_idx].public_key.clone();
             let session_id = 1000 + user_idx;
@@ -335,11 +384,11 @@ async fn processing_loop(state: SharedState) {
             );
         }
         println!(
-            "  Total: {} packets spawned across {} nodes",
-            s.total_expected, num_nodes
+            "  Total: {} packets spawned on server, {} will be spawned on phone",
+            (num_nodes - 1) * packets_per_node,
+            packets_per_node
         );
     }
-    phone_notify.notify_one();
 
     // Main processing loop
     let mut round = 0;
@@ -355,9 +404,9 @@ async fn processing_loop(state: SharedState) {
         round += 1;
 
         // Get config from state
-        let (num_nodes, phone_node, ttl) = {
+        let (num_nodes, phone_node, ttl, max_batch) = {
             let s = state.lock().await;
-            (s.queues.len(), s.phone_node, s.ttl)
+            (s.queues.len(), s.phone_node, s.ttl, s.max_batch_size)
         };
 
         let round_start = Instant::now();
@@ -370,10 +419,11 @@ async fn processing_loop(state: SharedState) {
                 continue;
             }
 
-            // Drain this node's queue
+            // Drain at most max_batch_size from this node's queue
             let messages: Vec<Message> = {
                 let mut s = state.lock().await;
-                s.queues[node_idx].drain(..).collect()
+                let drain_count = s.queues[node_idx].len().min(max_batch);
+                s.queues[node_idx].drain(..drain_count).collect()
             };
 
             if messages.is_empty() {
@@ -488,7 +538,7 @@ async fn processing_loop(state: SharedState) {
             );
         }
 
-        // Yield to HTTP handlers
+        // Yield to other tasks
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     }
 }
@@ -588,6 +638,7 @@ async fn main() {
         finalized_per_node: vec![0; cli.num_nodes],
         done: false,
         started: false,
+        max_batch_size: cli.max_batch_size,
         phone_notify,
         merkle_root,
         all_public_keys,
@@ -603,19 +654,15 @@ async fn main() {
         processing_loop(state_clone).await;
     });
 
-    // Step 5: Start HTTP server
+    // Step 5: Start server with /ws and /status
     let app = Router::new()
-        .route("/poll", get(handle_poll))
-        .route("/result", post(handle_result))
-        .route("/start", post(handle_start))
-        .route("/benchmark", post(handle_benchmark))
+        .route("/ws", get(handle_ws_upgrade))
         .route("/status", get(handle_status))
-        .layer(DefaultBodyLimit::max(256 * 1024 * 1024)) // 256MB — Messages with ZK proofs are large
         .with_state(shared_state);
 
     let addr = format!("0.0.0.0:{}", cli.port);
     println!("\nServer listening on {}", addr);
-    println!("Waiting for phone to POST /start ...");
+    println!("Waiting for phone to connect via WebSocket at /ws ...");
     println!(
         "Total: {} messages ({} nodes x {} packets, TTL={})",
         total_expected, cli.num_nodes, cli.packets_per_node, cli.ttl

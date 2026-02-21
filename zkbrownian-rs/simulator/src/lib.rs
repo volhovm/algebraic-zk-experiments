@@ -16,15 +16,24 @@ pub struct BatchForwardResult {
     pub forward_time_ms: f64,
 }
 
-/// Phone polls server: get all queued messages at once
+/// Server -> Phone messages over WebSocket
 #[derive(Serialize, Deserialize, Debug)]
-pub enum PollResponse {
+pub enum ServerMsg {
     /// Here are messages for you to process
     Work(Vec<Message>),
-    /// Nothing in your queue right now
-    NoWork,
     /// All messages have reached TTL, we're done
     Done,
+}
+
+/// Phone -> Server messages over WebSocket
+#[derive(Serialize, Deserialize, Debug)]
+pub enum PhoneMsg {
+    /// Phone is ready, trigger processing
+    Start,
+    /// Batch of forwarded results
+    Result(BatchForwardResult),
+    /// Final benchmark report
+    Benchmark(BenchmarkReport),
 }
 
 /// Final benchmark report from the phone
@@ -37,11 +46,11 @@ pub struct BenchmarkReport {
     /// Crypto timings
     pub total_verify_time_ms: f64,
     pub total_forward_time_ms: f64,
-    /// HTTP/network timings
-    pub total_poll_http_ms: f64,
-    pub total_result_http_ms: f64,
-    /// JSON serialization timings
-    pub total_poll_deser_ms: f64,
+    /// WS/network timings
+    pub total_ws_recv_ms: f64,
+    pub total_ws_send_ms: f64,
+    /// Serialization timings
+    pub total_recv_deser_ms: f64,
     pub total_result_ser_ms: f64,
     /// Per-batch breakdown
     pub per_batch: Vec<BatchTiming>,
@@ -58,8 +67,8 @@ pub struct BatchTiming {
     /// Crypto
     pub verify_time_ms: f64,
     pub forward_time_ms: f64,
-    /// Serialization: JSON-encode BatchForwardResult
+    /// Serialization: bincode-encode PhoneMsg::Result
     pub result_ser_ms: f64,
-    /// HTTP: POST /result round-trip
-    pub result_http_ms: f64,
+    /// WS: send result over websocket
+    pub result_ws_ms: f64,
 }
