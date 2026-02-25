@@ -8,6 +8,7 @@ pkgs.mkShell {
       ps.matplotlib
       ps.numpy
       ps.tqdm
+      ps.scipy
     ]))
   ];
 }
