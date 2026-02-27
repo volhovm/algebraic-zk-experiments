@@ -59,6 +59,10 @@ struct Cli {
     /// Maximum batch size for processing / sending
     #[arg(long, default_value = "64")]
     max_batch_size: usize,
+
+    /// Server-side verification mode: clients skip verify, server verifies forwarded outputs
+    #[arg(long, default_value = "false")]
+    server_verification: bool,
 }
 
 /// Server state shared across handlers and the background processing loop
@@ -67,6 +71,7 @@ struct ServerState {
     generated_state: GeneratedState,
     phone_node: usize,
     ttl: usize,
+    packets_per_node: usize,
 
     /// Per-node message queues: queues[i] contains messages addressed to node i
     queues: Vec<Vec<Message>>,
@@ -89,6 +94,12 @@ struct ServerState {
 
     /// Maximum batch size for processing / sending
     max_batch_size: usize,
+
+    /// Server-side verification mode
+    server_verification: bool,
+
+    /// Config bytes to send to phone on first notification (set when Start is received)
+    pending_config: Option<Vec<u8>>,
 
     /// Notified when phone's queue gets new messages
     phone_notify: Arc<Notify>,
@@ -120,6 +131,22 @@ async fn handle_ws_connection(socket: WebSocket, state: SharedState) {
     let writer_handle = tokio::spawn(async move {
         loop {
             phone_notify.notified().await;
+
+            // Send pending config first if any
+            {
+                let mut s = state_writer.lock().await;
+                if let Some(config_bytes) = s.pending_config.take() {
+                    drop(s);
+                    if ws_sender
+                        .send(WsMessage::Binary(config_bytes.into()))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                    continue;
+                }
+            }
 
             let msg = {
                 let mut s = state_writer.lock().await;
@@ -193,9 +220,59 @@ async fn handle_ws_connection(socket: WebSocket, state: SharedState) {
                 if !s.started {
                     s.started = true;
                     println!("\n=== Phone connected via WebSocket, starting protocol ===");
+
+                    // Send config to phone so it knows how many packets to spawn
+                    let config_msg = ServerMsg::Config {
+                        packets_per_node: s.packets_per_node,
+                        phone_node: s.phone_node,
+                        ttl: s.ttl,
+                    };
+                    let config_bytes =
+                        bincode::serialize(&config_msg).expect("Failed to serialize Config");
+                    // Send directly on the reader's half isn't possible, so
+                    // push a synthetic notification — but we need the writer to
+                    // send it.  Easiest: store a pending config and have the
+                    // writer pick it up.  Actually let's just use the ws_sender
+                    // from here — but we don't have it.
+                    //
+                    // Store pending config in state for the writer to pick up.
+                    s.pending_config = Some(config_bytes);
+                    s.phone_notify.notify_one();
                 }
             }
             PhoneMsg::Result(result) => {
+                // Extract verification data from state before potentially verifying
+                let (server_verification, merkle_root, weight_commitment, all_public_keys, pp) = {
+                    let s = state.lock().await;
+                    (
+                        s.server_verification,
+                        s.merkle_root,
+                        s.weight_commitment.clone(),
+                        s.all_public_keys.clone(),
+                        s.pp.clone(),
+                    )
+                };
+
+                // In server-verification mode, verify forwarded messages from phone
+                // before distributing to queues
+                // TODO: future optimization — only verify the newest hop (incremental verification)
+                if server_verification && !result.results.is_empty() {
+                    let (forwarded_msgs, _destinations): (Vec<Message>, Vec<usize>) =
+                        result.results.iter().cloned().unzip();
+                    let all_valid = verify_batch(
+                        &forwarded_msgs,
+                        merkle_root,
+                        &weight_commitment,
+                        &all_public_keys,
+                        &pp,
+                    )
+                    .expect("Server verification of phone forwarded output failed");
+                    assert!(
+                        all_valid,
+                        "Server verification failed for phone forwarded output"
+                    );
+                }
+
                 let mut s = state.lock().await;
 
                 // Count finalized messages
@@ -410,9 +487,15 @@ async fn processing_loop(state: SharedState) {
         round += 1;
 
         // Get config from state
-        let (num_nodes, phone_node, ttl, max_batch) = {
+        let (num_nodes, phone_node, ttl, max_batch, server_verification) = {
             let s = state.lock().await;
-            (s.queues.len(), s.phone_node, s.ttl, s.max_batch_size)
+            (
+                s.queues.len(),
+                s.phone_node,
+                s.ttl,
+                s.max_batch_size,
+                s.server_verification,
+            )
         };
 
         let round_start = Instant::now();
@@ -436,7 +519,7 @@ async fn processing_loop(state: SharedState) {
                 continue;
             }
 
-            // Batch verify all messages
+            // Batch verify input messages (skipped in server-verification mode)
             let (merkle_root, weight_commitment, all_public_keys, pp) = {
                 let s = state.lock().await;
                 (
@@ -447,15 +530,17 @@ async fn processing_loop(state: SharedState) {
                 )
             };
 
-            let all_valid = verify_batch(
-                &messages,
-                merkle_root,
-                &weight_commitment,
-                &all_public_keys,
-                &pp,
-            )
-            .expect("Batch verification failed");
-            assert!(all_valid, "Node {} received invalid messages", node_idx);
+            if !server_verification {
+                let all_valid = verify_batch(
+                    &messages,
+                    merkle_root,
+                    &weight_commitment,
+                    &all_public_keys,
+                    &pp,
+                )
+                .expect("Batch verification failed");
+                assert!(all_valid, "Node {} received invalid messages", node_idx);
+            }
 
             // Separate: messages at TTL → finalized, rest → forward
             let mut to_forward = Vec::new();
@@ -473,9 +558,9 @@ async fn processing_loop(state: SharedState) {
 
             // Batch forward remaining
             if !to_forward.is_empty() {
-                let (user_view, pp) = {
+                let user_view = {
                     let s = state.lock().await;
-                    (s.generated_state.users_view[node_idx].clone(), s.pp.clone())
+                    s.generated_state.users_view[node_idx].clone()
                 };
 
                 let batch_inputs: Vec<(UserView, Message)> = to_forward
@@ -488,6 +573,26 @@ async fn processing_loop(state: SharedState) {
                     let mut rng = thread_rng();
                     forward_batch(&pp, &batch_inputs, &mut rng).expect("Batch forward failed")
                 };
+
+                // In server-verification mode, verify forwarded output before distributing
+                // TODO: future optimization — only verify the newest hop (incremental verification)
+                if server_verification {
+                    let (forwarded_msgs, _destinations): (Vec<Message>, Vec<usize>) =
+                        batch_results.iter().cloned().unzip();
+                    let all_valid = verify_batch(
+                        &forwarded_msgs,
+                        merkle_root,
+                        &weight_commitment,
+                        &all_public_keys,
+                        &pp,
+                    )
+                    .expect("Server verification of forwarded output failed");
+                    assert!(
+                        all_valid,
+                        "Server verification failed for node {} forwarded output",
+                        node_idx
+                    );
+                }
 
                 // Distribute results to destination node queues
                 let mut phone_got_messages = false;
@@ -560,6 +665,7 @@ async fn main() {
     println!("  TTL: {}", cli.ttl);
     println!("  Port: {}", cli.port);
     println!("  Setup dir: {}", cli.setup_dir);
+    println!("  Server verification: {}", cli.server_verification);
 
     assert!(
         cli.phone_node < cli.num_nodes,
@@ -638,6 +744,7 @@ async fn main() {
         generated_state,
         phone_node: cli.phone_node,
         ttl: cli.ttl,
+        packets_per_node: cli.packets_per_node,
         queues,
         total_expected,
         total_completed: 0,
@@ -645,6 +752,8 @@ async fn main() {
         done: false,
         started: false,
         max_batch_size: cli.max_batch_size,
+        server_verification: cli.server_verification,
+        pending_config: None,
         phone_notify,
         merkle_root,
         all_public_keys,

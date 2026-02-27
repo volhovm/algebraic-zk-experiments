@@ -19,6 +19,12 @@ pub struct BatchForwardResult {
 /// Server -> Phone messages over WebSocket
 #[derive(Serialize, Deserialize, Debug)]
 pub enum ServerMsg {
+    /// Configuration sent once after the phone connects
+    Config {
+        packets_per_node: usize,
+        phone_node: usize,
+        ttl: usize,
+    },
     /// Here are messages for you to process
     Work(Vec<Message>),
     /// All messages have reached TTL, we're done

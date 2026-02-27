@@ -37,21 +37,18 @@ struct Cli {
     #[arg(long, default_value = "5")]
     batch_timeout_secs: u64,
 
-    /// TTL: messages at this hop count are finalized (walk complete)
-    #[arg(long, default_value = "5")]
-    ttl: usize,
-
-    /// Number of packets to spawn locally on this phone node
-    #[arg(long, default_value = "16")]
-    packets_per_node: usize,
-
-    /// This phone's node index (used for session ID when spawning)
-    #[arg(long, default_value = "0")]
-    phone_node: usize,
+    /// Server-side verification mode: phone skips verify, server verifies forwarded outputs
+    #[arg(long, default_value = "false")]
+    server_verification: bool,
 }
 
 /// Messages sent from WS reader to crypto thread
 enum InboundMsg {
+    Config {
+        packets_per_node: usize,
+        phone_node: usize,
+        ttl: usize,
+    },
     Messages(Vec<Message>),
     Done,
 }
@@ -73,7 +70,6 @@ async fn main() {
     println!("  Setup dir: {}", cli.setup_dir);
     println!("  Max batch size: {}", cli.max_batch_size);
     println!("  Batch timeout: {}s", cli.batch_timeout_secs);
-    println!("  TTL: {}", cli.ttl);
 
     // Step 1: Load setup data
     println!("\nLoading PublicParams...");
@@ -169,9 +165,7 @@ async fn main() {
     let (crypto_done_tx, crypto_done_rx) = tokio::sync::oneshot::channel::<()>();
     let batch_size = cli.max_batch_size;
     let batch_timeout_secs = cli.batch_timeout_secs;
-    let ttl = cli.ttl;
-    let packets_per_node = cli.packets_per_node;
-    let phone_node = cli.phone_node;
+    let server_verification = cli.server_verification;
     std::thread::spawn(move || {
         crypto_thread(
             inbound_rx,
@@ -183,9 +177,7 @@ async fn main() {
             all_public_keys,
             batch_size,
             batch_timeout_secs,
-            ttl,
-            packets_per_node,
-            phone_node,
+            server_verification,
         );
         let _ = crypto_done_tx.send(());
     });
@@ -227,6 +219,26 @@ async fn main() {
                     let _ = inbound_tx.send(InboundMsg::Done);
                     break;
                 }
+                ServerMsg::Config {
+                    packets_per_node,
+                    phone_node,
+                    ttl,
+                } => {
+                    println!(
+                        "  [ws-reader] Received Config: packets_per_node={}, phone_node={}, ttl={}",
+                        packets_per_node, phone_node, ttl
+                    );
+                    if inbound_tx
+                        .send(InboundMsg::Config {
+                            packets_per_node,
+                            phone_node,
+                            ttl,
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
             }
         }
     });
@@ -267,18 +279,50 @@ fn crypto_thread(
     all_public_keys: Vec<zkbrownian::types::PublicKey>,
     max_batch_size: usize,
     batch_timeout_secs: u64,
-    ttl: usize,
-    packets_per_node: usize,
-    phone_node: usize,
+    server_verification: bool,
 ) {
     let mut rng = thread_rng();
     let batch_timeout = Duration::from_secs(batch_timeout_secs);
     let mut buffer: Vec<Message> = Vec::new();
     let mut last_process_time = Instant::now();
 
-    // Spawn local packets immediately — no WS round-trip needed
+    // Wait for Config from server to get authoritative packets_per_node/phone_node/ttl
+    let (packets_per_node, phone_node, ttl) = {
+        println!("\n[crypto] Waiting for config from server...");
+        loop {
+            match inbound_rx.recv() {
+                Ok(InboundMsg::Config {
+                    packets_per_node: ppn,
+                    phone_node: pn,
+                    ttl: t,
+                }) => {
+                    println!(
+                        "[crypto] Got config: packets_per_node={}, phone_node={}, ttl={}",
+                        ppn, pn, t
+                    );
+                    break (ppn, pn, t);
+                }
+                Ok(other) => {
+                    // Shouldn't happen — Config should arrive first
+                    eprintln!(
+                        "[crypto] Warning: received non-Config message before Config, ignoring"
+                    );
+                    // Put messages back into buffer if they're work
+                    if let InboundMsg::Messages(msgs) = other {
+                        buffer.extend(msgs);
+                    }
+                }
+                Err(_) => {
+                    eprintln!("[crypto] Channel closed before receiving Config");
+                    return;
+                }
+            }
+        }
+    };
+
+    // Spawn local packets
     println!(
-        "\n[crypto] Spawning {} local packets (node {})...",
+        "[crypto] Spawning {} local packets (node {})...",
         packets_per_node, phone_node
     );
     let spawn_start = Instant::now();
@@ -349,6 +393,7 @@ fn crypto_thread(
                     InboundMsg::Done => {
                         done = true;
                     }
+                    InboundMsg::Config { .. } => {} // Already handled at startup
                 }
             }
 
@@ -361,6 +406,7 @@ fn crypto_thread(
                     Ok(InboundMsg::Done) => {
                         done = true;
                     }
+                    Ok(InboundMsg::Config { .. }) => {} // Already handled at startup
                     Err(_) => break,
                 }
             }
@@ -391,6 +437,7 @@ fn crypto_thread(
                 &mut total_forward_ms,
                 &mut total_result_ser_ms,
                 &mut total_result_ws_ms,
+                server_verification,
             );
             last_process_time = Instant::now();
         }
@@ -503,6 +550,7 @@ fn process_batch(
     total_forward_ms: &mut f64,
     total_result_ser_ms: &mut f64,
     total_result_ws_ms: &mut f64,
+    server_verification: bool,
 ) {
     let drain_count = buffer.len().min(max_batch_size);
     let messages: Vec<Message> = buffer.drain(..drain_count).collect();
@@ -514,19 +562,23 @@ fn process_batch(
         batch_num, batch_size
     );
 
-    // Batch verify
-    let verify_start = Instant::now();
-    let all_valid = verify_batch(
-        &messages,
-        *merkle_root,
-        weight_commitment,
-        all_public_keys,
-        pp,
-    )
-    .expect("Batch verification error");
-    let verify_ms = verify_start.elapsed().as_secs_f64() * 1000.0;
-
-    assert!(all_valid, "Phone received invalid messages");
+    // Batch verify (skipped in server-verification mode)
+    let verify_ms = if server_verification {
+        0.0
+    } else {
+        let verify_start = Instant::now();
+        let all_valid = verify_batch(
+            &messages,
+            *merkle_root,
+            weight_commitment,
+            all_public_keys,
+            pp,
+        )
+        .expect("Batch verification error");
+        let ms = verify_start.elapsed().as_secs_f64() * 1000.0;
+        assert!(all_valid, "Phone received invalid messages");
+        ms
+    };
 
     *total_verified += batch_size;
     *total_verify_ms += verify_ms;
