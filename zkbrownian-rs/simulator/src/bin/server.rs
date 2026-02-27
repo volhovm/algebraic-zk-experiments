@@ -205,7 +205,11 @@ async fn handle_ws_connection(socket: WebSocket, state: SharedState) {
 
                 // Distribute forwarded messages
                 let mut forwarded = 0;
+                let mut phone_got_messages = false;
                 for (message, next_node) in result.results {
+                    if next_node == phone_node {
+                        phone_got_messages = true;
+                    }
                     s.queues[next_node].push(message);
                     forwarded += 1;
                 }
@@ -223,6 +227,8 @@ async fn handle_ws_connection(socket: WebSocket, state: SharedState) {
                 if s.total_completed >= s.total_expected {
                     s.done = true;
                     print_finalized_summary(&s);
+                    s.phone_notify.notify_one();
+                } else if phone_got_messages {
                     s.phone_notify.notify_one();
                 }
             }
