@@ -18,7 +18,7 @@ use crate::MAX_HOPS;
 use ark_bls12_381::G1Projective;
 use ark_ec::{CurveGroup, PrimeGroup};
 use ark_std::rand::Rng;
-use ark_std::UniformRand;
+use ark_std::{UniformRand, Zero};
 
 /// Information about a single neighbor
 #[derive(Clone, Debug)]
@@ -653,49 +653,58 @@ struct BatchForwardPrepData {
     theta: ScalarField,
 }
 
+/// Input data for batch proof preparation, borrowing from UserView to avoid cloning
+struct ProofBatchInput<'a> {
+    pk: &'a PublicKey,
+    sk: &'a SecretKey,
+    phi_nu_plus_1: &'a PrfOutput,
+    k_r: usize,
+    neighbours_view: &'a NeighboursView,
+    own_sub_merkle_root: ScalarField,
+    v1: u64,
+    v2: u64,
+    precompute: &'a LocalPrecompute,
+}
+
 /// Forward multiple packets in batch, optimizing Schnorr proof generation
+/// and using batch field inversion for PRF computation.
 ///
 /// This function processes N packets together by:
-/// 1. Preparing all packets sequentially (theta, phi, next hop, proofs)
-/// 2. Batch-generating all N Schnorr proofs together (THE OPTIMIZATION)
-/// 3. Assembling the final messages
+/// 1. Batch-inverting all (θ + sk) values (Montgomery's trick: 1 inversion + 3(N-1) muls)
+/// 2. Preparing all proofs in parallel (rerandomization + Schnorr witnesses)
+/// 3. Batch-generating all N Schnorr proofs together
+/// 4. Assembling the final messages
 ///
 /// # Arguments
 ///
 /// * `pp` - Public parameters (must include batch_tables)
-/// * `inputs` - Vector of (UserView, Message) pairs to forward
+/// * `inputs` - Slice of (&UserView, &Message) pairs to forward (borrows, no cloning needed)
 /// * `rng` - Random number generator
 ///
 /// # Returns
 ///
-/// Vector of (updated_message, receiver_index, diversifier) tuples
-///
-/// # Performance
-///
-/// Expected speedup over N sequential `forward()` calls:
-/// - N=10: ~1.5×
-/// - N=100: ~3-4×
-/// - N=500: ~4-5×
+/// Vector of (updated_message, receiver_index) tuples
 pub fn forward_batch<R: Rng>(
     pp: &PublicParams,
-    inputs: &[(UserView, Message)],
+    inputs: &[(&UserView, &Message)],
     rng: &mut R,
 ) -> ProtocolResult<Vec<(Message, usize)>> {
     if inputs.is_empty() {
         return Ok(vec![]);
     }
 
-    // Phase 1a: Collect intermediate data for batch proof preparation
-    let mut intermediate_data = Vec::with_capacity(inputs.len());
+    let n = inputs.len();
 
-    for (user_view, message) in inputs {
-        // Same logic as forward() lines 534-609
+    // Phase 1a, pass 1: Compute all thetas and (θ + sk) sums for batch inversion
+    let mut thetas = Vec::with_capacity(n);
+    let mut exponents = Vec::with_capacity(n); // will hold θ+sk, then 1/(θ+sk) after batch inversion
+
+    for &(user_view, message) in inputs {
         let nu = message.hop_count();
         if nu >= MAX_HOPS {
             return Err(ProtocolError::MaxHopsExceeded);
         }
 
-        // Derive θ
         let hasher = PoseidonHash::new();
         let phi_prev = if nu == 0 {
             ScalarField::from(0u64)
@@ -721,13 +730,38 @@ pub fn forward_batch<R: Rng>(
         };
 
         let theta = hasher.hash_theta(&phi_prev, message.sid, message.pid, nu);
+        let sum = theta + user_view.secret_key.sk;
+        thetas.push(theta);
+        exponents.push(sum);
+    }
 
-        // Compute φ_{ν+1}
-        let generator = G1Projective::generator().into_affine();
-        let phi_nu_plus_1 =
-            compute_prf(&theta, &user_view.secret_key, &generator).ok_or_else(|| {
-                ProtocolError::CryptoError("PRF computation failed (θ+sk=0)".to_string())
-            })?;
+    // Batch invert all (θ + sk) values: N inversions with 1 actual inversion + 3(N-1) muls
+    ark_ff::fields::batch_inversion(&mut exponents);
+    // Now exponents[i] = 1/(θ_i + sk_i), or 0 if the sum was 0
+
+    // Check for failed inversions (θ + sk = 0, extremely unlikely)
+    for exp in &exponents {
+        if exp.is_zero() {
+            return Err(ProtocolError::CryptoError(
+                "PRF computation failed (θ+sk=0)".to_string(),
+            ));
+        }
+    }
+
+    // Phase 1a, pass 2: Use inverted exponents to compute PRFs, select hops, diversify
+    let generator_proj = G1Projective::generator();
+
+    let mut phis = Vec::with_capacity(n);
+    let mut k_rs = Vec::with_capacity(n);
+    let mut ds = Vec::with_capacity(n);
+    let mut ppks = Vec::with_capacity(n);
+    let mut v1s = Vec::with_capacity(n);
+    let mut v2s = Vec::with_capacity(n);
+
+    for (i, &(user_view, _message)) in inputs.iter().enumerate() {
+        // Compute G^{1/(θ+sk)} using the batch-inverted exponent
+        let phi_point = (generator_proj * exponents[i]).into_affine();
+        let phi_nu_plus_1 = PrfOutput { phi: phi_point };
 
         // Select next hop
         let rho_nu_plus_1 = extract_routing_value(&phi_nu_plus_1);
@@ -740,41 +774,45 @@ pub fn forward_batch<R: Rng>(
         };
         let (ppk_nu_plus_1, _) = diversify_with_diversifier(&pk_nu_plus_1, &d);
 
-        intermediate_data.push((
-            message.clone(),
-            user_view.public_key.clone(),
-            user_view.secret_key.clone(),
-            theta,
-            phi_nu_plus_1,
-            ppk_nu_plus_1,
-            k_r,
-            d,
-            user_view.neighbours_view.clone(),
-            user_view.own_sub_merkle_root,
-            user_view.own_merkle_proof.clone(),
-            v1,
-            v2,
-            user_view.precompute.clone(),
-        ));
+        phis.push(phi_nu_plus_1);
+        k_rs.push(k_r);
+        ds.push(d);
+        ppks.push(ppk_nu_plus_1);
+        v1s.push(v1);
+        v2s.push(v2);
     }
 
-    // Phase 1b: Batch prepare all proofs in parallel
-    let proof_results = prepare_forward_proofs_batch(pp, &intermediate_data)?;
+    // Phase 1b: Batch prepare all proofs in parallel (borrows from inputs, no cloning)
+    let proof_inputs: Vec<ProofBatchInput> = inputs
+        .iter()
+        .enumerate()
+        .map(|(i, &(user_view, _))| ProofBatchInput {
+            pk: &user_view.public_key,
+            sk: &user_view.secret_key,
+            phi_nu_plus_1: &phis[i],
+            k_r: k_rs[i],
+            neighbours_view: &user_view.neighbours_view,
+            own_sub_merkle_root: user_view.own_sub_merkle_root,
+            v1: v1s[i],
+            v2: v2s[i],
+            precompute: &user_view.precompute,
+        })
+        .collect();
+
+    let proof_results = prepare_forward_proofs_batch(pp, &proof_inputs)?;
 
     // Phase 1c: Assemble prep data
-    let mut prep_data = Vec::with_capacity(inputs.len());
-    for (i, (message, _, sk, theta, phi_nu_plus_1, ppk_nu_plus_1, k_r, d, _, _, _, _, _, _)) in
-        intermediate_data.into_iter().enumerate()
-    {
+    let mut prep_data = Vec::with_capacity(n);
+    for (i, &(user_view, message)) in inputs.iter().enumerate() {
         let (pi_1, pi_2, pi_3, c11, c12, c21, c22, cv1, cv2, pk_star, pk_r_star, schnorr_witness) =
             proof_results[i].clone();
 
         prep_data.push(BatchForwardPrepData {
-            message,
-            k_r,
-            d,
-            ppk_nu_plus_1,
-            phi_nu_plus_1,
+            message: message.clone(),
+            k_r: k_rs[i],
+            d: ds[i].clone(),
+            ppk_nu_plus_1: ppks[i].clone(),
+            phi_nu_plus_1: phis[i].clone(),
             pi_1,
             pi_2,
             pi_3,
@@ -787,8 +825,8 @@ pub fn forward_batch<R: Rng>(
             pk_star,
             pk_r_star,
             schnorr_witness,
-            sk,
-            theta,
+            sk: user_view.secret_key.clone(),
+            theta: thetas[i],
         });
     }
 
@@ -1065,34 +1103,11 @@ fn prepare_forward_proof(
 
 /// Batch prepare forward proofs for multiple messages in parallel
 ///
-/// This function takes intermediate data for multiple proofs and processes them
-/// in parallel using rayon, performing Groth16 proof rerandomization and G3 operations.
-///
-/// # Arguments
-/// * `pp` - Public parameters
-/// * `batch_data` - Vector of tuples containing all necessary data for each proof
-///
-/// # Returns
-/// Vector of tuples containing proof results for each message
+/// Uses ProofBatchInput structs that borrow from UserView, avoiding expensive clones.
 #[allow(clippy::type_complexity)]
 fn prepare_forward_proofs_batch(
     pp: &PublicParams,
-    batch_data: &[(
-        Message,
-        PublicKey,
-        SecretKey,
-        ScalarField,
-        PrfOutput,
-        DiversifiedPublicKey,
-        usize,
-        Diversifier,
-        NeighboursView,
-        ScalarField,
-        Vec<ScalarField>,
-        u64,
-        u64,
-        LocalPrecompute,
-    )],
+    batch_data: &[ProofBatchInput],
 ) -> ProtocolResult<
     Vec<(
         ProofGroth16,
@@ -1113,164 +1128,160 @@ fn prepare_forward_proofs_batch(
 
     batch_data
         .par_iter()
-        .map(
-            |(
-                _message,
+        .map(|input| {
+            let ProofBatchInput {
                 pk,
                 sk,
-                _theta,
                 phi_nu_plus_1,
-                _ppk_nu_plus_1,
                 k_r,
-                _d,
                 neighbours_view,
                 own_sub_merkle_root,
-                _own_merkle_proof,
                 v1,
                 v2,
                 precompute,
-            )| {
-                // Generate random blinding factors
-                let r1_new = ScalarField::rand(&mut rand::thread_rng());
-                let r2_new = ScalarField::rand(&mut rand::thread_rng());
-                let r_v1_new = ScalarField::rand(&mut rand::thread_rng());
-                let r_v2_new = ScalarField::rand(&mut rand::thread_rng());
+            } = input;
 
-                // Find neighbor index
-                let neighbor_idx = neighbours_view
-                    .neighbors
-                    .iter()
-                    .position(|n| n.index == *k_r)
-                    .ok_or(ProtocolError::InvalidWeightSelection)?;
+            // Generate random blinding factors
+            let r1_new = ScalarField::rand(&mut rand::thread_rng());
+            let r2_new = ScalarField::rand(&mut rand::thread_rng());
+            let r_v1_new = ScalarField::rand(&mut rand::thread_rng());
+            let r_v2_new = ScalarField::rand(&mut rand::thread_rng());
 
-                // Rerandomize proofs
-                let (pi_1, c11, c12) = adjust_groth16_merkle_membership(
-                    pp,
-                    &precompute.pi_1_sender,
-                    precompute.c11_precomputed,
-                    precompute.c12_precomputed,
-                    r1_new,
-                )?;
+            // Find neighbor index
+            let neighbor_idx = neighbours_view
+                .neighbors
+                .iter()
+                .position(|n| n.index == *k_r)
+                .ok_or(ProtocolError::InvalidWeightSelection)?;
 
-                let (pi_3, c21, c22) = adjust_groth16_merkle_membership(
-                    pp,
-                    &precompute.pi_3_receivers[neighbor_idx],
-                    precompute.c21_precomputed[neighbor_idx],
-                    precompute.c22_precomputed[neighbor_idx],
-                    r2_new,
-                )?;
+            // Rerandomize proofs
+            let (pi_1, c11, c12) = adjust_groth16_merkle_membership(
+                pp,
+                &precompute.pi_1_sender,
+                precompute.c11_precomputed,
+                precompute.c12_precomputed,
+                r1_new,
+            )?;
 
-                let (c_v1_precomputed, _v1_value) = precompute.c_v1_precomputed[neighbor_idx];
-                let (c_v2_precomputed, _v2_value) = precompute.c_v2_precomputed[neighbor_idx];
+            let (pi_3, c21, c22) = adjust_groth16_merkle_membership(
+                pp,
+                &precompute.pi_3_receivers[neighbor_idx],
+                precompute.c21_precomputed[neighbor_idx],
+                precompute.c22_precomputed[neighbor_idx],
+                r2_new,
+            )?;
 
-                let (pi_2, c_v1, c_v2) = adjust_groth16_weight_subtree(
-                    pp,
-                    &precompute.pi_2_weights[neighbor_idx],
-                    c_v1_precomputed,
-                    c_v2_precomputed,
-                    r1_new,
-                    r2_new,
-                    r_v1_new,
-                    r_v2_new,
-                )?;
+            let (c_v1_precomputed, _v1_value) = precompute.c_v1_precomputed[neighbor_idx];
+            let (c_v2_precomputed, _v2_value) = precompute.c_v2_precomputed[neighbor_idx];
 
-                // Extract sender and receiver information
-                use ark_ff::{BigInteger, PrimeField};
-                let pk_x_scalar =
-                    ScalarField::from_le_bytes_mod_order(&pk.pk.x.into_bigint().to_bytes_le());
-                let pk_y_scalar =
-                    ScalarField::from_le_bytes_mod_order(&pk.pk.y.into_bigint().to_bytes_le());
-                let md_2_k_s = *own_sub_merkle_root;
+            let (pi_2, c_v1, c_v2) = adjust_groth16_weight_subtree(
+                pp,
+                &precompute.pi_2_weights[neighbor_idx],
+                c_v1_precomputed,
+                c_v2_precomputed,
+                r1_new,
+                r2_new,
+                r_v1_new,
+                r_v2_new,
+            )?;
 
-                let receiver = neighbours_view
-                    .neighbors
-                    .iter()
-                    .find(|n| n.index == *k_r)
-                    .ok_or(ProtocolError::InvalidWeightSelection)?;
+            // Extract sender and receiver information
+            use ark_ff::{BigInteger, PrimeField};
+            let pk_x_scalar =
+                ScalarField::from_le_bytes_mod_order(&pk.pk.x.into_bigint().to_bytes_le());
+            let pk_y_scalar =
+                ScalarField::from_le_bytes_mod_order(&pk.pk.y.into_bigint().to_bytes_le());
+            let md_2_k_s = *own_sub_merkle_root;
 
-                let pk_r_x_scalar = ScalarField::from_le_bytes_mod_order(
-                    &receiver.public_key.pk.x.into_bigint().to_bytes_le(),
-                );
-                let pk_r_y_scalar = ScalarField::from_le_bytes_mod_order(
-                    &receiver.public_key.pk.y.into_bigint().to_bytes_le(),
-                );
-                let md_2_k_r = receiver.sub_merkle_root;
+            let receiver = neighbours_view
+                .neighbors
+                .iter()
+                .find(|n| n.index == *k_r)
+                .ok_or(ProtocolError::InvalidWeightSelection)?;
 
-                // Generate blinded G3 points
-                use crate::crypto::curve::{g3_base_to_scalar, scalar_to_g3_scalar, G3Proj};
-                let g3_base = pp.generators.g3(0).ok_or_else(|| {
-                    ProtocolError::CryptoError("Missing G3 generator 0".to_string())
-                })?;
+            let pk_r_x_scalar = ScalarField::from_le_bytes_mod_order(
+                &receiver.public_key.pk.x.into_bigint().to_bytes_le(),
+            );
+            let pk_r_y_scalar = ScalarField::from_le_bytes_mod_order(
+                &receiver.public_key.pk.y.into_bigint().to_bytes_le(),
+            );
+            let md_2_k_r = receiver.sub_merkle_root;
 
-                let g3_proj = G3Proj::from(*g3_base);
-                let h3_proj = G3Proj::from(pp.h_g3);
+            // Generate blinded G3 points
+            use crate::crypto::curve::{g3_base_to_scalar, scalar_to_g3_scalar, G3Proj};
+            let g3_base = pp
+                .generators
+                .g3(0)
+                .ok_or_else(|| ProtocolError::CryptoError("Missing G3 generator 0".to_string()))?;
 
-                let r_star = ScalarField::rand(&mut rand::thread_rng());
-                let r_r_star = ScalarField::rand(&mut rand::thread_rng());
+            let g3_proj = G3Proj::from(*g3_base);
+            let h3_proj = G3Proj::from(pp.h_g3);
 
-                let sk_g3 = scalar_to_g3_scalar(&sk.sk);
-                let r_star_g3 = scalar_to_g3_scalar(&r_star);
-                let r_r_star_g3 = scalar_to_g3_scalar(&r_r_star);
+            let r_star = ScalarField::rand(&mut rand::thread_rng());
+            let r_r_star = ScalarField::rand(&mut rand::thread_rng());
 
-                let pk_star = (g3_proj * sk_g3 + h3_proj * r_star_g3).into_affine();
-                let pk_r_proj = G3Proj::from(receiver.public_key.pk);
-                let pk_r_star = (pk_r_proj + h3_proj * r_r_star_g3).into_affine();
+            let sk_g3 = scalar_to_g3_scalar(&sk.sk);
+            let r_star_g3 = scalar_to_g3_scalar(&r_star);
+            let r_r_star_g3 = scalar_to_g3_scalar(&r_r_star);
 
-                let pk_star_x_scalar = g3_base_to_scalar(&pk_star.x);
-                let pk_star_y_scalar = g3_base_to_scalar(&pk_star.y);
-                let pk_r_star_x_scalar = g3_base_to_scalar(&pk_r_star.x);
-                let pk_r_star_y_scalar = g3_base_to_scalar(&pk_r_star.y);
+            let pk_star = (g3_proj * sk_g3 + h3_proj * r_star_g3).into_affine();
+            let pk_r_proj = G3Proj::from(receiver.public_key.pk);
+            let pk_r_star = (pk_r_proj + h3_proj * r_r_star_g3).into_affine();
 
-                use ark_ec::CurveGroup;
-                let pk_star_g3 = G3::new(pk_star_x_scalar, pk_star_y_scalar);
-                let h_r_star = (h3_proj * r_star_g3).into_affine();
-                let pk_star_blinded = (pk_star_g3 + h_r_star).into_affine();
+            let pk_star_x_scalar = g3_base_to_scalar(&pk_star.x);
+            let pk_star_y_scalar = g3_base_to_scalar(&pk_star.y);
+            let pk_r_star_x_scalar = g3_base_to_scalar(&pk_r_star.x);
+            let pk_r_star_y_scalar = g3_base_to_scalar(&pk_r_star.y);
 
-                let pk_r_star_g3 = G3::new(pk_r_star_x_scalar, pk_r_star_y_scalar);
-                let h_r_r_star = (h3_proj * r_r_star_g3).into_affine();
-                let pk_r_star_blinded = (pk_r_star_g3 + h_r_r_star).into_affine();
+            use ark_ec::CurveGroup;
+            let pk_star_g3 = G3::new(pk_star_x_scalar, pk_star_y_scalar);
+            let h_r_star = (h3_proj * r_star_g3).into_affine();
+            let pk_star_blinded = (pk_star_g3 + h_r_star).into_affine();
 
-                let rho = ScalarField::from(extract_routing_value(phi_nu_plus_1));
+            let pk_r_star_g3 = G3::new(pk_r_star_x_scalar, pk_r_star_y_scalar);
+            let h_r_r_star = (h3_proj * r_r_star_g3).into_affine();
+            let pk_r_star_blinded = (pk_r_star_g3 + h_r_r_star).into_affine();
 
-                // Build Schnorr witness
-                let schnorr_witness = SchnorrBridgingWitness {
-                    pk_x: pk_x_scalar,
-                    pk_y: pk_y_scalar,
-                    md_2_k_s,
-                    r1: r1_new,
-                    pk_r_x: pk_r_x_scalar,
-                    pk_r_y: pk_r_y_scalar,
-                    md_2_k_r,
-                    r2: r2_new,
-                    v1: *v1,
-                    r_v1: r_v1_new,
-                    v2: *v2,
-                    r_v2: r_v2_new,
-                    rho,
-                    r_star,
-                    r_r_star,
-                    pk_star_g3,
-                    pk_star_blinded,
-                    pk_r_star_g3,
-                    pk_r_star_blinded,
-                };
+            let rho = ScalarField::from(extract_routing_value(phi_nu_plus_1));
 
-                Ok((
-                    pi_1,
-                    pi_2,
-                    pi_3,
-                    c11,
-                    c12,
-                    c21,
-                    c22,
-                    c_v1,
-                    c_v2,
-                    pk_star_blinded,
-                    pk_r_star_blinded,
-                    schnorr_witness,
-                ))
-            },
-        )
+            // Build Schnorr witness
+            let schnorr_witness = SchnorrBridgingWitness {
+                pk_x: pk_x_scalar,
+                pk_y: pk_y_scalar,
+                md_2_k_s,
+                r1: r1_new,
+                pk_r_x: pk_r_x_scalar,
+                pk_r_y: pk_r_y_scalar,
+                md_2_k_r,
+                r2: r2_new,
+                v1: *v1,
+                r_v1: r_v1_new,
+                v2: *v2,
+                r_v2: r_v2_new,
+                rho,
+                r_star,
+                r_r_star,
+                pk_star_g3,
+                pk_star_blinded,
+                pk_r_star_g3,
+                pk_r_star_blinded,
+            };
+
+            Ok((
+                pi_1,
+                pi_2,
+                pi_3,
+                c11,
+                c12,
+                c21,
+                c22,
+                c_v1,
+                c_v2,
+                pk_star_blinded,
+                pk_r_star_blinded,
+                schnorr_witness,
+            ))
+        })
         .collect()
 }
 
@@ -2081,7 +2092,8 @@ mod tests {
         let generated_state = generate_random_state(&pp, 5, &mut rng);
 
         // Create 3 packets from different users
-        let mut inputs = Vec::new();
+        let mut messages = Vec::new();
+        let mut user_views = Vec::new();
 
         for i in 0..3 {
             let user_view = &generated_state.users_view[i];
@@ -2096,10 +2108,16 @@ mod tests {
             )
             .unwrap();
 
-            inputs.push((user_view.clone(), message));
+            user_views.push(user_view);
+            messages.push(message);
         }
 
         // Test batch forward
+        let inputs: Vec<(&UserView, &Message)> = user_views
+            .iter()
+            .zip(messages.iter())
+            .map(|(&uv, m)| (uv, m))
+            .collect();
         let result = forward_batch(&pp, &inputs, &mut rng);
 
         match result {
@@ -2128,7 +2146,7 @@ mod tests {
         let pp = create_test_public_params(&mut rng);
 
         // Test with empty input
-        let inputs: Vec<(UserView, Message)> = vec![];
+        let inputs: Vec<(&UserView, &Message)> = vec![];
         let result = forward_batch(&pp, &inputs, &mut rng);
 
         assert!(result.is_ok());

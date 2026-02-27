@@ -563,10 +563,8 @@ async fn processing_loop(state: SharedState) {
                     s.generated_state.users_view[node_idx].clone()
                 };
 
-                let batch_inputs: Vec<(UserView, Message)> = to_forward
-                    .into_iter()
-                    .map(|msg| (user_view.clone(), msg))
-                    .collect();
+                let batch_inputs: Vec<(&UserView, &Message)> =
+                    to_forward.iter().map(|msg| (&user_view, msg)).collect();
 
                 // Scope rng so it doesn't live across await
                 let batch_results = {

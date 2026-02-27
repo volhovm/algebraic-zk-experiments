@@ -603,10 +603,8 @@ fn process_batch(
     let num_to_forward = to_forward.len();
 
     if !to_forward.is_empty() {
-        let batch_inputs: Vec<(UserView, Message)> = to_forward
-            .into_iter()
-            .map(|msg| (user_view.clone(), msg))
-            .collect();
+        let batch_inputs: Vec<(&UserView, &Message)> =
+            to_forward.iter().map(|msg| (user_view, msg)).collect();
 
         let forward_start = Instant::now();
         let batch_results =

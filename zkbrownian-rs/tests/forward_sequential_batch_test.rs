@@ -21,26 +21,26 @@ fn test_forward_sequential_then_batch_timing() {
 
     for batch_size in [32, 64, 128] {
         println!("\n=== Preparing {} messages ===", batch_size);
-        let inputs: Vec<_> = (0..batch_size)
+        let user_view = &generated_state.users_view[0];
+        let messages: Vec<_> = (0..batch_size)
             .map(|i| {
-                let user_view = &generated_state.users_view[0];
-                let message = spawn(
+                spawn(
                     &user_view.secret_key,
                     &user_view.public_key,
                     1 + i as u32,
                     100,
                     &mut rng,
                 )
-                .unwrap();
-                (user_view.clone(), message)
+                .unwrap()
             })
             .collect();
+        let inputs: Vec<_> = messages.iter().map(|m| (user_view, m)).collect();
 
         // Test 1: Sequential forward (64 times)
         println!("\n=== SEQUENTIAL FORWARD ({} messages) ===", batch_size);
         let sequential_start = std::time::Instant::now();
 
-        for (i, (user_view, message)) in inputs.iter().enumerate() {
+        for (i, &(user_view, message)) in inputs.iter().enumerate() {
             print!(".");
             if i % 32 == 31 {
                 println!();
@@ -107,20 +107,20 @@ fn test_forward_sequential_vs_batch_correctness() {
     println!("\n=== Testing with batch size: {} ===", BATCH_SIZE);
 
     // Create inputs - spawn messages from user 0
-    let inputs: Vec<_> = (0..BATCH_SIZE)
+    let user_view_0 = &generated_state.users_view[0];
+    let messages: Vec<_> = (0..BATCH_SIZE)
         .map(|i| {
-            let user_view = &generated_state.users_view[0];
-            let message = spawn(
-                &user_view.secret_key,
-                &user_view.public_key,
+            spawn(
+                &user_view_0.secret_key,
+                &user_view_0.public_key,
                 1 + i as u32,
                 100,
                 &mut rng,
             )
-            .unwrap();
-            (user_view.clone(), message)
+            .unwrap()
         })
         .collect();
+    let inputs: Vec<_> = messages.iter().map(|m| (user_view_0, m)).collect();
 
     // Test 1: Sequential forward with deterministic RNG - 3 hops
     println!("\n=== Running SEQUENTIAL forward (3 hops) ===");
@@ -129,7 +129,7 @@ fn test_forward_sequential_vs_batch_correctness() {
 
     // Hop 1
     println!("  Hop 1...");
-    for (user_view, message) in inputs.iter() {
+    for &(user_view, message) in inputs.iter() {
         let (new_message, next_node_index) = forward(&pp, user_view, message, &mut sequential_rng)
             .expect("Sequential forward hop 1 failed");
         sequential_results.push((new_message, next_node_index));
@@ -178,7 +178,7 @@ fn test_forward_sequential_vs_batch_correctness() {
     println!("  Hop 2...");
     let batch_inputs_hop2: Vec<_> = batch_results
         .iter()
-        .map(|(msg, holder)| (generated_state.users_view[*holder].clone(), msg.clone()))
+        .map(|(msg, holder)| (&generated_state.users_view[*holder], msg))
         .collect();
     batch_results =
         forward_batch(&pp, &batch_inputs_hop2, &mut batch_rng).expect("Batch forward hop 2 failed");
@@ -187,7 +187,7 @@ fn test_forward_sequential_vs_batch_correctness() {
     println!("  Hop 3...");
     let batch_inputs_hop3: Vec<_> = batch_results
         .iter()
-        .map(|(msg, holder)| (generated_state.users_view[*holder].clone(), msg.clone()))
+        .map(|(msg, holder)| (&generated_state.users_view[*holder], msg))
         .collect();
     batch_results =
         forward_batch(&pp, &batch_inputs_hop3, &mut batch_rng).expect("Batch forward hop 3 failed");

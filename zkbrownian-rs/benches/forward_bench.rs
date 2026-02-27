@@ -80,20 +80,20 @@ fn bench_forward_batch(c: &mut Criterion) {
 
     for batch_size in [50, 100, 250, 500] {
         // Prepare batch_size messages
-        let inputs: Vec<_> = (0..batch_size)
+        let user_view = &generated_state.users_view[0];
+        let messages: Vec<_> = (0..batch_size)
             .map(|i| {
-                let user_view = &generated_state.users_view[0];
-                let message = spawn(
+                spawn(
                     &user_view.secret_key,
                     &user_view.public_key,
                     1 + i as u32,
                     100,
                     &mut rng,
                 )
-                .unwrap();
-                (user_view.clone(), message)
+                .unwrap()
             })
             .collect();
+        let inputs: Vec<_> = messages.iter().map(|m| (user_view, m)).collect();
 
         group.bench_with_input(
             BenchmarkId::from_parameter(batch_size),
@@ -124,20 +124,20 @@ fn bench_forward_sequential_vs_batch(c: &mut Criterion) {
 
     // Prepare 100 messages for comparison
     for batch_size in [64, 128, 256] {
-        let inputs: Vec<_> = (0..batch_size)
+        let user_view = &generated_state.users_view[0];
+        let messages: Vec<_> = (0..batch_size)
             .map(|i| {
-                let user_view = &generated_state.users_view[0];
-                let message = spawn(
+                spawn(
                     &user_view.secret_key,
                     &user_view.public_key,
                     1 + i as u32,
                     100,
                     &mut rng,
                 )
-                .unwrap();
-                (user_view.clone(), message)
+                .unwrap()
             })
             .collect();
+        let inputs: Vec<_> = messages.iter().map(|m| (user_view, m)).collect();
 
         // Benchmark batch forward
         group.bench_function(format!("forward_batch_{}", batch_size), |b| {
@@ -149,7 +149,7 @@ fn bench_forward_sequential_vs_batch(c: &mut Criterion) {
         // Benchmark sequential forward
         group.bench_function(format!("forward_sequential_{}", batch_size), |b| {
             b.iter(|| {
-                for (user_view, message) in &inputs {
+                for &(user_view, message) in &inputs {
                     let _ = forward(
                         black_box(&pp),
                         black_box(user_view),

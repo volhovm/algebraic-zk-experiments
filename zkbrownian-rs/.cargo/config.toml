@@ -1,0 +1,5 @@
+# Fairphone 5: QCM6490 / Kryo 670 = Cortex-A78 (big) + Cortex-A55 (little)
+# Setting target-cpu=cortex-a78 enables optimal instruction scheduling and
+# NEON SIMD for the big cores that handle the crypto workload.
+[target.aarch64-linux-android]
+rustflags = ["-C", "target-cpu=cortex-a78"]

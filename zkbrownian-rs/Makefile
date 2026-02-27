@@ -5,6 +5,7 @@ IP ?= $(error IP is required, e.g. make launch-simulation IP=10.163.192.78)
 launch-simulation:
 	# Build phone binary for Android
 	cargo build --release -p zkbrownian-simulator --bin phone --target aarch64-linux-android
+	cargo build --release -p zkbrownian-simulator --bin server
 	# Start tmux: left pane = server, right pane = phone (waits for server + push)
 	tmux new-session -d -s zksim \
 		'cd $(CURDIR) && cargo run --release -p zkbrownian-simulator --bin server -- \
@@ -17,5 +18,6 @@ launch-simulation:
 		adb shell /data/local/tmp/zkbrownian/phone \
 			--server-url http://$(IP):8080 \
             --server-verification \
+            --max-batch-size 32 \
 			--setup-dir /data/local/tmp/zkbrownian; $$SHELL'
 	tmux attach -t zksim

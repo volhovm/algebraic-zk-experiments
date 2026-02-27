@@ -323,10 +323,10 @@ fn test_full_protocol_regular() {
             // Process messages in batches of 64
             let mut messages_vec = std::mem::take(user_messages);
             for batch_chunk in messages_vec.chunks_mut(BATCH_SIZE) {
-                // Prepare batch inputs: (user_view, message) tuples
+                // Prepare batch inputs: (&UserView, &Message) tuples (no cloning)
                 let batch_inputs: Vec<_> = batch_chunk
                     .iter()
-                    .map(|(msg, _origin)| (current_user_view.clone(), msg.clone()))
+                    .map(|(msg, _origin)| (current_user_view, msg))
                     .collect();
 
                 // Forward all messages in this batch at once
@@ -723,10 +723,10 @@ fn test_full_protocol_concurrent() {
                 if !messages_to_forward.is_empty() {
                     let forward_start = Instant::now();
 
-                    // Prepare batch inputs: (user_view, message) tuples
+                    // Prepare batch inputs: (&UserView, &Message) tuples (no cloning)
                     let batch_inputs: Vec<_> = messages_to_forward
                         .iter()
-                        .map(|msg| (user_view.clone(), msg.clone()))
+                        .map(|msg| (&user_view, msg))
                         .collect();
 
                     // Forward all messages in batch
