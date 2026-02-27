@@ -176,12 +176,33 @@ fn read_pedersen_gens(r: &mut BinReader) -> Result<PedersenGens<G1Affine>> {
 fn write_bulletproof_gens(w: &mut BinWriter, bg: &BulletproofGens<G1Affine>) {
     w.write_usize(bg.gens_capacity);
     w.write_usize(bg.party_capacity);
+    // Serialize actual generator points (not just reconstruction params)
+    // to ensure cross-platform consistency.
+    for party_g in bg.g_vec() {
+        w.write_vec_canonical(party_g);
+    }
+    for party_h in bg.h_vec() {
+        w.write_vec_canonical(party_h);
+    }
 }
 
 fn read_bulletproof_gens(r: &mut BinReader) -> Result<BulletproofGens<G1Affine>> {
     let gens_capacity = r.read_usize()?;
     let party_capacity = r.read_usize()?;
-    Ok(BulletproofGens::new(gens_capacity, party_capacity))
+    let mut g_vec = Vec::with_capacity(party_capacity);
+    for _ in 0..party_capacity {
+        g_vec.push(r.read_vec_canonical()?);
+    }
+    let mut h_vec = Vec::with_capacity(party_capacity);
+    for _ in 0..party_capacity {
+        h_vec.push(r.read_vec_canonical()?);
+    }
+    Ok(BulletproofGens::from_vecs(
+        gens_capacity,
+        party_capacity,
+        g_vec,
+        h_vec,
+    ))
 }
 
 // ============================================================================

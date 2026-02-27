@@ -178,6 +178,34 @@ impl<C: AffineRepr> BulletproofGens<C> {
         }
     }
 
+    /// Construct `BulletproofGens` directly from pre-computed generator vectors.
+    ///
+    /// Used when deserializing generators that were serialized point-by-point
+    /// (instead of reconstructing from labels, which may differ across platforms).
+    pub fn from_vecs(
+        gens_capacity: usize,
+        party_capacity: usize,
+        g_vec: Vec<Vec<C>>,
+        h_vec: Vec<Vec<C>>,
+    ) -> Self {
+        BulletproofGens {
+            gens_capacity,
+            party_capacity,
+            G_vec: g_vec,
+            H_vec: h_vec,
+        }
+    }
+
+    /// Get a reference to the G generator vectors (for serialization).
+    pub fn g_vec(&self) -> &Vec<Vec<C>> {
+        &self.G_vec
+    }
+
+    /// Get a reference to the H generator vectors (for serialization).
+    pub fn h_vec(&self) -> &Vec<Vec<C>> {
+        &self.H_vec
+    }
+
     /// Increases the generators' capacity to the amount specified.
     /// If less than or equal to the current capacity, does nothing.
     pub fn increase_capacity(&mut self, new_capacity: usize) {
