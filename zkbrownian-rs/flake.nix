@@ -29,6 +29,8 @@
 
         androidNdk = pkgs.androidenv.androidPkgs.ndk-bundle;
         ndkToolchain = "${androidNdk}/libexec/android-sdk/ndk-bundle/toolchains/llvm/prebuilt/linux-x86_64";
+
+        succinct-toolchain = pkgs.callPackage ./sp1-schnorr/succinct-toolchain.nix {};
       in
       {
         defaultPackage = naersk-lib.buildPackage ./.;
@@ -47,12 +49,21 @@
 
             # Android
             androidNdk
+
+            # SP1 build deps
+            pkgs.clang
+            pkgs.llvmPackages.libclang
+            pkgs.protobuf
+            pkgs.gcc
+            pkgs.gnumake
           ];
 
           shellHook = ''
             echo "zkbrownian-rs development environment"
             echo "Rust version: $(rustc --version)"
             echo "Cargo version: $(cargo --version)"
+            export LIBCLANG_PATH="${pkgs.llvmPackages.libclang.lib}/lib"
+            export SP1_TOOLCHAIN_DIR="${succinct-toolchain}"
           '';
 
           CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER = "${ndkToolchain}/bin/aarch64-linux-android33-clang";
