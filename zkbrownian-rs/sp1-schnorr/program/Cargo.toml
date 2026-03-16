@@ -1,0 +1,14 @@
+[package]
+name = "sp1-schnorr-program"
+version = { workspace = true }
+edition = { workspace = true }
+publish = false
+
+[dependencies]
+sp1-zkvm = { workspace = true }
+sp1-schnorr-lib = { workspace = true }
+bls12_381 = { workspace = true }
+ff = { workspace = true }
+merlin = { workspace = true }
+sha3 = { workspace = true }
+serde = { workspace = true }

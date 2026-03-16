@@ -1,0 +1,45 @@
+[workspace]
+members = ["lib", "program", "script"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+
+[workspace.dependencies]
+sp1-build = { path = "/home/volhovm/code/sp1/crates/build" }
+sp1-sdk = { path = "/home/volhovm/code/sp1/crates/sdk" }
+sp1-zkvm = { path = "/home/volhovm/code/sp1/crates/zkvm/entrypoint", features = ["lib"] }
+
+sp1-schnorr-lib = { path = "lib" }
+
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1.4", features = ["full"] }
+
+# zkcrypto BLS12-381 (the guest uses this)
+bls12_381 = "0.8.0"
+ff = "0.13.0"
+group = "0.13.0"
+
+# For Fiat-Shamir transcript in the guest
+merlin = { version = "2", default-features = false }
+sha3 = { version = "0.9.1", default-features = false }
+
+[patch.crates-io]
+# SP1 patches for optimized zkVM crypto (used by program/)
+bls12_381 = { git = "https://github.com/sp1-patches/bls12_381", tag = "patch-0.8.0-sp1-6.0.0" }
+tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "patch-2.0.2-sp1-6.0.0" }
+
+# Arkworks patches needed by script/ (which depends on zkbrownian)
+ark-relations = { git = "https://github.com/arkworks-rs/snark.git" }
+ark-ff = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-ec = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-poly = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-grumpkin = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-bls12-377 = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-bn254 = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-bw6-761 = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-mnt4-298 = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-r1cs-std = { git = "https://github.com/arkworks-rs/r1cs-std.git" }
