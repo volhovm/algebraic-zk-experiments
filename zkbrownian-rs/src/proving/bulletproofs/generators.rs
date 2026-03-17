@@ -316,7 +316,7 @@ impl<'a, C: AffineRepr> BulletproofGensShare<'a, C> {
     }
 
     /// Return an iterator over this party's H generators with given size `n`.
-    pub(crate) fn H(&self, n: usize) -> impl Iterator<Item = &'a C> {
+    pub fn H(&self, n: usize) -> impl Iterator<Item = &'a C> {
         self.gens.H_vec[self.share].iter().take(n)
     }
 }

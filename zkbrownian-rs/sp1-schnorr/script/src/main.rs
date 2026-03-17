@@ -14,9 +14,9 @@ use ark_ec::short_weierstrass::Affine as SWAffine;
 use ark_ec::AffineRepr;
 use ark_ec::CurveGroup;
 use ark_ec::VariableBaseMSM;
-use ark_ed_on_bls12_381::EdwardsAffine as G3;
-use ark_ff::PrimeField;
+use ark_ed_on_bls12_381::SWAffine as G3;
 use ark_ff::UniformRand;
+use ark_ff::Zero;
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
 use sp1_sdk::prelude::*;
@@ -189,14 +189,13 @@ fn generate_test_data(
             pk_r_star_blinded,
         };
 
-        use ark_ec::Group;
-        let c11 = <G1A as AffineRepr>::Group::rand(&mut rng);
-        let c12 = <G1A as AffineRepr>::Group::rand(&mut rng);
-        let c21 = <G1A as AffineRepr>::Group::rand(&mut rng);
-        let c22 = <G1A as AffineRepr>::Group::rand(&mut rng);
-        let c_v1_proj = <G1A as AffineRepr>::Group::rand(&mut rng);
-        let c_v2_proj = <G1A as AffineRepr>::Group::rand(&mut rng);
-        let g_rho = <G1A as AffineRepr>::Group::rand(&mut rng);
+        let c11 = ark_bls12_381::G1Projective::rand(&mut rng);
+        let c12 = ark_bls12_381::G1Projective::rand(&mut rng);
+        let c21 = ark_bls12_381::G1Projective::rand(&mut rng);
+        let c22 = ark_bls12_381::G1Projective::rand(&mut rng);
+        let c_v1_proj = ark_bls12_381::G1Projective::rand(&mut rng);
+        let c_v2_proj = ark_bls12_381::G1Projective::rand(&mut rng);
+        let g_rho = ark_bls12_381::G1Projective::rand(&mut rng);
 
         let instance = SchnorrBridgingInstance {
             pk_star_blinded,
@@ -262,7 +261,10 @@ fn verify_msm(
     // Reconstruct fixed generators
     let gens = bp_gens.share(0);
     if bp_gens.gens_capacity < padded_n {
-        println!("ERROR: bp_gens capacity {} < padded_n {}", bp_gens.gens_capacity, padded_n);
+        println!(
+            "ERROR: bp_gens capacity {} < padded_n {}",
+            bp_gens.gens_capacity, padded_n
+        );
         return false;
     }
 
@@ -279,15 +281,10 @@ fn verify_msm(
     );
 
     // Combine all points and scalars for MSM
-    let all_points: Vec<G1A> = proof_points
-        .into_iter()
-        .chain(fixed_points)
-        .collect();
+    let all_points: Vec<G1A> = proof_points.into_iter().chain(fixed_points).collect();
 
-    let all_scalars: Vec<ark_bls12_381::Fr> = proof_scalars
-        .into_iter()
-        .chain(fixed_scalars)
-        .collect();
+    let all_scalars: Vec<ark_bls12_381::Fr> =
+        proof_scalars.into_iter().chain(fixed_scalars).collect();
 
     // Perform MSM
     let result = <G1A as AffineRepr>::Group::msm_unchecked(&all_points, &all_scalars);
@@ -314,9 +311,7 @@ async fn main() {
     println!("Verifying natively...");
     {
         use zkbrownian::proving::circuits::verify_schnorr_bridging;
-        for (i, (r1cs_proof, instance)) in
-            r1cs_proofs.iter().zip(instances.iter()).enumerate()
-        {
+        for (i, (r1cs_proof, instance)) in r1cs_proofs.iter().zip(instances.iter()).enumerate() {
             let schnorr_proof = {
                 let mut buf = Vec::new();
                 r1cs_proof.serialize_compressed(&mut buf).unwrap();
@@ -325,13 +320,8 @@ async fn main() {
                     _phantom: std::marker::PhantomData,
                 }
             };
-            let result = verify_schnorr_bridging(
-                &schnorr_proof,
-                instance,
-                &pc_gens,
-                &bp_gens,
-                &g3_tables,
-            );
+            let result =
+                verify_schnorr_bridging(&schnorr_proof, instance, &pc_gens, &bp_gens, &g3_tables);
             match result {
                 Ok(true) => println!("  Proof {} verified natively OK", i),
                 other => panic!("  Proof {} native verification FAILED: {:?}", i, other),
@@ -370,7 +360,7 @@ async fn main() {
     stdin.write(&input);
 
     println!("Executing SP1 guest...");
-    let (public_values, report) = client.execute(ELF, stdin).await.expect("execution failed");
+    let (mut public_values, report) = client.execute(ELF, stdin).await.expect("execution failed");
     println!(
         "Execution complete. Cycles: {}",
         report.total_instruction_count()

@@ -88,17 +88,16 @@ impl TranscriptProtocol for Transcript {
             sha.update([i]);
             let result = sha.finalize();
 
-            // Try to interpret the hash output as a valid scalar.
-            // arkworks uses from_random_bytes which accepts if the value < modulus.
-            // We need to match this behavior exactly.
-            //
-            // The BLS12-381 scalar field modulus is:
-            // r = 0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001
-            //
-            // from_random_bytes in arkworks takes the first 32 bytes and reduces mod r.
-            // Actually, it checks if the value (interpreted as little-endian) is < r,
-            // and returns None if not.
-            let hash_bytes: [u8; 32] = result[..32].try_into().unwrap();
+            let mut hash_bytes: [u8; 32] = result[..32].try_into().unwrap();
+
+            // CRITICAL: Match arkworks from_random_bytes behavior.
+            // Arkworks masks the top bits before checking < modulus:
+            //   shave_bits = 64 * NUM_LIMBS - MODULUS_BIT_SIZE = 256 - 255 = 1
+            // So it clears bit 255 (the MSB of byte 31 in little-endian).
+            // Without this masking, ~50% of hash outputs would be handled differently
+            // by arkworks vs zkcrypto, causing challenge scalar divergence.
+            hash_bytes[31] &= 0x7F;
+
             let opt = Scalar::from_bytes(&hash_bytes);
             if bool::from(opt.is_some()) {
                 return opt.unwrap();
