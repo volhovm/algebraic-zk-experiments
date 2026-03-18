@@ -77,6 +77,7 @@ fn process_single_proof(
     let mut transcript = Transcript::new(b"SchnorrBridging");
     transcript.r1cs_domain_sep();
 
+    println!("cycle-tracker-report-start: constraint_building");
     let mut cs = VerifierCS::new();
 
     // First re_randomize: pk_star
@@ -119,9 +120,11 @@ fn process_single_proof(
     while cs.size() > cs.num_vars {
         cs.allocate_multiplier();
     }
+    println!("cycle-tracker-report-end: constraint_building");
 
     let n1 = cs.size();
 
+    println!("cycle-tracker-report-start: transcript_challenges");
     // Append m (number of committed variables)
     transcript.append_u64(b"m", cs.num_committed as u64);
 
@@ -195,9 +198,12 @@ fn process_single_proof(
 
     // Challenge: w
     let w = transcript.challenge_scalar(b"w");
+    println!("cycle-tracker-report-end: transcript_challenges");
 
     // Flatten constraints at z
+    println!("cycle-tracker-report-start: flattened_constraints");
     let (wL, wR, wO, _wV, wVCs, wc) = cs.flattened_constraints(&z);
+    println!("cycle-tracker-report-end: flattened_constraints");
 
     // Deserialize l_vec and r_vec
     let l_vec: Vec<Scalar> = proof.l_vec.iter().map(scalar_from_bytes).collect();
@@ -208,6 +214,7 @@ fn process_single_proof(
     }
 
     // Inner product
+    println!("cycle-tracker-report-start: inner_products");
     let ab = inner_product(&l_vec, &r_vec);
 
     // y-inverse powers
@@ -223,7 +230,9 @@ fn process_single_proof(
 
     // delta = <yneg_wR[0..num_vars], wL>
     let delta = inner_product(&yneg_wR[0..cs.num_vars], &wL);
+    println!("cycle-tracker-report-end: inner_products");
 
+    println!("cycle-tracker-report-start: vector_scalars");
     // u_for_g: [1, 1, ..., 1 (n1 times), u, u, ..., u (n2 times)]
     let u_for_g: Vec<Scalar> = std::iter::repeat_n(Scalar::one(), n1)
         .chain(std::iter::repeat_n(u, n2))
@@ -276,7 +285,9 @@ fn process_single_proof(
             h_scalars.push(res);
         }
     }
+    println!("cycle-tracker-report-end: vector_scalars");
 
+    println!("cycle-tracker-report-start: build_output");
     // T points and scalars (skip T[op_degree])
     let mut T_points_bytes: Vec<Vec<u8>> = Vec::new();
     let mut T_scalars: Vec<Scalar> = Vec::new();
@@ -332,6 +343,8 @@ fn process_single_proof(
     fixed_scalars.extend(g_scalars);
     fixed_scalars.extend(h_scalars);
 
+    println!("cycle-tracker-report-end: build_output");
+
     Ok(VerificationTuple {
         proof_dependent_points: proof_points,
         proof_dependent_scalars: proof_scalars,
@@ -354,13 +367,16 @@ pub fn compute_batch_verification(input: &GuestInput) -> GuestOutput {
     }
 
     // Convert lookup tables
+    println!("cycle-tracker-report-start: convert_tables");
     let tables: Vec<Lookup3Bit<2>> = input
         .lookup_tables
         .iter()
         .map(convert_lookup_table)
         .collect();
+    println!("cycle-tracker-report-end: convert_tables");
 
     // Process all proofs
+    println!("cycle-tracker-report-start: process_proofs");
     let mut verification_tuples = Vec::with_capacity(input.num_proofs as usize);
     for i in 0..input.num_proofs as usize {
         let r_scalar = scalar_from_bytes(&input.r_scalars[i]);
@@ -368,7 +384,9 @@ pub fn compute_batch_verification(input: &GuestInput) -> GuestOutput {
             .expect("Failed to process proof");
         verification_tuples.push(vt);
     }
+    println!("cycle-tracker-report-end: process_proofs");
 
+    println!("cycle-tracker-report-start: batch_combine");
     // Batch combine: first tuple is unscaled, remaining are scaled by random scalar
     let mut vt_iter = verification_tuples.into_iter();
     let first = vt_iter.next().unwrap();
@@ -400,12 +418,16 @@ pub fn compute_batch_verification(input: &GuestInput) -> GuestOutput {
             *acc += s * random_scalar;
         }
     }
+    println!("cycle-tracker-report-end: batch_combine");
 
+    println!("cycle-tracker-report-start: serialize_output");
     // Convert to output format
-    GuestOutput {
+    let output = GuestOutput {
         proof_points_bytes: all_proof_points,
         proof_scalars: all_proof_scalars.iter().map(scalar_to_bytes).collect(),
         fixed_scalars: fixed_scalars.iter().map(scalar_to_bytes).collect(),
         padded_n,
-    }
+    };
+    println!("cycle-tracker-report-end: serialize_output");
+    output
 }

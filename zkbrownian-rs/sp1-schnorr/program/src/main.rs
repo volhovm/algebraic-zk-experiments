@@ -16,12 +16,15 @@ mod verification;
 use sp1_schnorr_lib::GuestInput;
 
 pub fn main() {
-    // Read input from host
+    println!("cycle-tracker-report-start: total");
+
     let input: GuestInput = sp1_zkvm::io::read();
 
-    // Process all proofs and compute verification scalars
+    println!("cycle-tracker-report-start: compute_batch_verification");
     let output = verification::compute_batch_verification(&input);
+    println!("cycle-tracker-report-end: compute_batch_verification");
 
-    // Commit the output (public values)
     sp1_zkvm::io::commit(&output);
+
+    println!("cycle-tracker-report-end: total");
 }

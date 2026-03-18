@@ -399,6 +399,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_profile_1_proof() {
+        println!("Generating 1 test proof for profiling...");
+        let (r1cs_proofs, instances, g3_tables, pc_gens, bp_gens) = generate_test_data(1);
+
+        println!("Verifying natively...");
+        verify_natively(&r1cs_proofs, &instances, &pc_gens, &bp_gens, &g3_tables);
+
+        let input = prepare_guest_input(&r1cs_proofs, &instances, &g3_tables, 1);
+
+        let client = ProverClient::builder().cpu().build().await;
+        let mut stdin = SP1Stdin::new();
+        stdin.write(&input);
+
+        println!("Executing SP1 guest with profiling...");
+        let (mut public_values, report) =
+            client.execute(ELF, stdin).await.expect("execution failed");
+
+        let output: GuestOutput = public_values.read();
+
+        // Verify correctness
+        assert!(verify_msm(&output, &pc_gens, &bp_gens), "MSM check FAILED");
+        println!("MSM check PASSED.");
+
+        // Print cycle tracker breakdown
+        println!("\n=== Cycle Tracker Breakdown ===");
+        let mut cycle_entries: Vec<_> = report.cycle_tracker.iter().collect();
+        cycle_entries.sort_by(|a, b| b.1.cmp(a.1));
+        let total_cycles = report.total_instruction_count();
+        for (label, cycles) in &cycle_entries {
+            let pct = (**cycles as f64 / total_cycles as f64) * 100.0;
+            println!("  {:<30} {:>12} cycles ({:>5.1}%)", label, cycles, pct);
+        }
+        println!("  {:<30} {:>12} cycles", "TOTAL", total_cycles);
+
+        // Print top opcode counts
+        println!("\n=== Top Opcode Counts ===");
+        let mut opcode_entries: Vec<_> = report.opcode_counts.iter().collect();
+        opcode_entries.sort_by(|a, b| b.1.cmp(a.1));
+        for (opcode, count) in opcode_entries.iter().take(15) {
+            let pct = (**count as f64 / total_cycles as f64) * 100.0;
+            println!(
+                "  {:<30} {:>12} ({:>5.1}%)",
+                format!("{:?}", opcode),
+                count,
+                pct
+            );
+        }
+
+        println!("\n==> Total cycles: {}", total_cycles);
+    }
+
+    #[tokio::test]
     #[ignore] // ~5 min
     async fn test_batch_10_proofs() {
         let cycles = run_batch_execute(10).await;
