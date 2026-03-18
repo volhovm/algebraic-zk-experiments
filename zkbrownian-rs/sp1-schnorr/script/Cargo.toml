@@ -3,6 +3,14 @@ name = "sp1-schnorr-script"
 version = { workspace = true }
 edition = { workspace = true }
 
+[lib]
+name = "sp1_schnorr_script"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sp1-schnorr-script"
+path = "src/main.rs"
+
 [dependencies]
 sp1-sdk = { workspace = true }
 sp1-schnorr-lib = { workspace = true }

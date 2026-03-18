@@ -108,7 +108,7 @@ impl TranscriptProtocol for Transcript {
             // let mut buf = [0u8; 32];
 
             let result = sha.finalize();
-            let res = <C::ScalarField as Field>::from_random_bytes(result.as_slice());
+            let res = <C::ScalarField as Field>::from_random_bytes(&result[..]);
 
             if let Some(scalar) = res {
                 return scalar;
