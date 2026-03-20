@@ -29,7 +29,7 @@ rand = "0.8"
 merlin = "2"
 
 # For generating test data
-zkbrownian = { path = "../.." }
+zkbrownian = { path = "../../zkbrownian-rs" }
 
 [build-dependencies]
 sp1-build = { workspace = true }
