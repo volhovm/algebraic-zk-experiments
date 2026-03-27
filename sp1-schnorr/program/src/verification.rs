@@ -89,6 +89,7 @@ fn process_single_proof(
     let c_x_tilde_var = cs.allocate();
     let c_y_tilde_var = cs.allocate();
 
+    println!("cycle-tracker-report-start: re_randomize_1");
     re_randomize(
         &mut cs,
         tables,
@@ -97,6 +98,7 @@ fn process_single_proof(
         c_x_tilde_var.into(),
         c_y_tilde_var.into(),
     );
+    println!("cycle-tracker-report-end: re_randomize_1");
 
     // Second re_randomize: pk_r_star
     let c_r_x_var = cs.allocate();
@@ -104,6 +106,7 @@ fn process_single_proof(
     let c_r_x_tilde_var = cs.allocate();
     let c_r_y_tilde_var = cs.allocate();
 
+    println!("cycle-tracker-report-start: re_randomize_2");
     re_randomize(
         &mut cs,
         tables,
@@ -112,6 +115,7 @@ fn process_single_proof(
         c_r_x_tilde_var.into(),
         c_r_y_tilde_var.into(),
     );
+    println!("cycle-tracker-report-end: re_randomize_2");
 
     // Now compute verification_scalars_and_points
     // This mirrors verifier.rs:467-714
@@ -120,6 +124,12 @@ fn process_single_proof(
     while cs.size() > cs.num_vars {
         cs.allocate_multiplier();
     }
+    println!(
+        "  [info] num_constraints={}, num_vars={}, total_terms={}",
+        cs.constraints.len(),
+        cs.num_vars,
+        cs.constraints.iter().map(|lc| lc.terms.len()).sum::<usize>()
+    );
     println!("cycle-tracker-report-end: constraint_building");
 
     let n1 = cs.size();
@@ -206,8 +216,10 @@ fn process_single_proof(
     println!("cycle-tracker-report-end: flattened_constraints");
 
     // Deserialize l_vec and r_vec
+    println!("cycle-tracker-report-start: deserialize_lr");
     let l_vec: Vec<Scalar> = proof.l_vec.iter().map(scalar_from_bytes).collect();
     let r_vec: Vec<Scalar> = proof.r_vec.iter().map(scalar_from_bytes).collect();
+    println!("cycle-tracker-report-end: deserialize_lr");
 
     if l_vec.len() != n || r_vec.len() != n {
         return Err("l_vec/r_vec length mismatch");

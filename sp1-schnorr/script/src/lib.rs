@@ -474,18 +474,18 @@ mod tests {
         let mut stdin = SP1Stdin::new();
         stdin.write(&input);
 
-        println!("Generating SP1 core proof...");
+        println!("Generating SP1 compressed proof...");
         let proof = client
             .prove(&pk, stdin)
-            .core()
+            .compressed()
             .await
             .expect("proof generation failed");
 
-        println!("Verifying SP1 core proof...");
+        println!("Verifying SP1 compressed proof...");
         client
             .verify(&proof, pk.verifying_key(), None)
             .expect("proof verification failed");
-        println!("SP1 core proof verified successfully!");
+        println!("SP1 compressed proof verified successfully!");
 
         // Also verify MSM from the proof's public values
         let mut public_values = proof.public_values.clone();

@@ -8,7 +8,7 @@ edition = "2021"
 
 [workspace.dependencies]
 sp1-build = { path = "/home/volhovm/code/sp1/crates/build" }
-sp1-sdk = { path = "/home/volhovm/code/sp1/crates/sdk" }
+sp1-sdk = { path = "/home/volhovm/code/sp1/crates/sdk", features = ["profiling"] }
 sp1-zkvm = { path = "/home/volhovm/code/sp1/crates/zkvm/entrypoint", features = ["lib"] }
 
 sp1-schnorr-lib = { path = "lib" }

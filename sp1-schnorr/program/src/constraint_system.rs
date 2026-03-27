@@ -246,6 +246,11 @@ impl VerifierCS {
             .map(|dim| vec![Scalar::zero(); *dim])
             .collect();
 
+        println!(
+            "  [flatten] num_constraints={}, total_terms={}",
+            self.constraints.len(),
+            self.constraints.iter().map(|lc| lc.terms.len()).sum::<usize>()
+        );
         let mut exp_z = *z;
         for lc in &self.constraints {
             for (var, coeff) in &lc.terms {
