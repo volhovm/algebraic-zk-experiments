@@ -7,8 +7,7 @@
 #![no_main]
 sp1_zkvm::entrypoint!(main);
 
-mod constraint_system;
-mod relations;
+mod direct_constraints;
 mod transcript;
 mod types;
 mod verification;

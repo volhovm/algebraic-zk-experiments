@@ -464,9 +464,31 @@ impl<T: BorrowMut<Transcript>, C: AffineRepr> Verifier<T, C> {
         Ok(())
     }
 
+    /// Compute verification scalars and points with an internally-generated random `r` scalar.
     pub fn verification_scalars_and_points(
+        self,
+        proof: &R1CSProof<C>,
+    ) -> Result<VerificationTuple<C>, R1CSError> {
+        let mut rng = rand::thread_rng();
+        let r = C::ScalarField::rand(&mut rng);
+        self.verification_scalars_and_points_impl(proof, r)
+    }
+
+    /// Compute verification scalars and points with a caller-provided `r` scalar.
+    /// This is useful when the host needs to reproduce the exact same scalars
+    /// as the guest (e.g. for hash commitment verification).
+    pub fn verification_scalars_and_points_with_r(
+        self,
+        proof: &R1CSProof<C>,
+        r: C::ScalarField,
+    ) -> Result<VerificationTuple<C>, R1CSError> {
+        self.verification_scalars_and_points_impl(proof, r)
+    }
+
+    fn verification_scalars_and_points_impl(
         mut self,
         proof: &R1CSProof<C>,
+        r: C::ScalarField,
     ) -> Result<VerificationTuple<C>, R1CSError> {
         // pad
         while self.size() > self.num_vars {
@@ -547,9 +569,6 @@ impl<T: BorrowMut<Transcript>, C: AffineRepr> Verifier<T, C> {
         // compute powers for vector commitments
         // they are assigned the lowest powers and therefore the coefficients
         // in the combination are correspondingly assigned the highest powers
-
-        let mut rng = rand::thread_rng();
-        let r = C::ScalarField::rand(&mut rng);
 
         // precompute x powers
         let mut xs: Vec<C::ScalarField> = vec![C::ScalarField::zero(); t_poly_deg + 1];
@@ -718,6 +737,46 @@ pub struct VerificationTuple<C: AffineRepr> {
     pub proof_dependent_points: Vec<C>,
     pub proof_dependent_scalars: Vec<C::ScalarField>,
     pub proof_independent_scalars: Vec<C::ScalarField>,
+}
+
+/// Combine verification tuples using externally-provided random scalars,
+/// returning the combined scalars without performing MSM.
+///
+/// The first tuple is used as-is (unscaled). Each subsequent tuple's scalars
+/// are multiplied by the corresponding element from `batch_random_scalars`.
+/// Therefore `batch_random_scalars` should have length `verification_tuples.len() - 1`.
+///
+/// Returns `(proof_points, proof_scalars, fixed_scalars, padded_n)`.
+#[allow(clippy::type_complexity)]
+pub fn batch_combine_scalars<C: AffineRepr>(
+    verification_tuples: Vec<VerificationTuple<C>>,
+    batch_random_scalars: &[C::ScalarField],
+) -> (Vec<C>, Vec<C::ScalarField>, Vec<C::ScalarField>, usize) {
+    let mut ver_iter = verification_tuples.into_iter();
+    let vt = ver_iter.next().unwrap();
+    let (mut proof_points, mut proof_scalars, mut fixed_scalars) = (
+        vt.proof_dependent_points,
+        vt.proof_dependent_scalars,
+        vt.proof_independent_scalars,
+    );
+    let padded_n = (fixed_scalars.len() - 2) / 2;
+
+    for (vt, random_scalar) in ver_iter.zip(batch_random_scalars.iter()) {
+        proof_points.extend(vt.proof_dependent_points);
+        proof_scalars.extend(
+            vt.proof_dependent_scalars
+                .into_iter()
+                .map(|s| s * random_scalar),
+        );
+        for (acc, s) in fixed_scalars
+            .iter_mut()
+            .zip(vt.proof_independent_scalars.iter())
+        {
+            *acc += *s * random_scalar;
+        }
+    }
+
+    (proof_points, proof_scalars, fixed_scalars, padded_n)
 }
 
 pub fn batch_verify<C: AffineRepr>(

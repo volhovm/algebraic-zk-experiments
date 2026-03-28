@@ -812,6 +812,118 @@ pub fn verify_schnorr_bridging_batch(
     Ok(true)
 }
 
+/// Compute batch verification scalars using host-provided random values.
+///
+/// This mirrors [`verify_schnorr_bridging_batch`] but uses externally-provided
+/// random scalars (`r_scalars` for each proof's verifier, `batch_random_scalars`
+/// for combining tuples) and returns the raw scalars instead of performing MSM.
+///
+/// This is needed so the host can independently recompute the same scalars as
+/// the SP1 guest (which also uses host-provided randoms) to verify the guest's
+/// hash commitment.
+///
+/// Returns `(proof_points, proof_scalars, fixed_scalars, padded_n)`.
+#[allow(clippy::type_complexity)]
+pub fn compute_schnorr_bridging_batch_scalars(
+    proofs_and_instances: &[(Schnorr<G1>, SchnorrBridgingInstance)],
+    g3_tables: &[crate::proving::relations::lookup::Lookup3Bit<2, ScalarField>],
+    r_scalars: &[ScalarField],
+    batch_random_scalars: &[ScalarField],
+) -> ProtocolResult<(Vec<G1A>, Vec<ScalarField>, Vec<ScalarField>, usize)> {
+    use crate::proving::bulletproofs::r1cs::*;
+    use crate::proving::relations::curve::PointRepresentation;
+    use crate::proving::relations::rerandomize::re_randomize;
+    use ark_ed_on_bls12_381::JubjubConfig;
+    use ark_serialize::CanonicalDeserialize;
+    use merlin::Transcript;
+
+    assert_eq!(
+        r_scalars.len(),
+        proofs_and_instances.len(),
+        "Need one r_scalar per proof"
+    );
+    assert_eq!(
+        batch_random_scalars.len(),
+        proofs_and_instances.len().saturating_sub(1),
+        "Need (n-1) batch_random_scalars for n proofs"
+    );
+
+    // Step 1: Deserialize all proofs
+    let mut r1cs_proofs = Vec::with_capacity(proofs_and_instances.len());
+    for (proof, _) in proofs_and_instances {
+        let mut cursor = &proof.data[..];
+        let r1cs_proof = R1CSProof::deserialize_compressed(&mut cursor)
+            .map_err(|e| ProtocolError::CryptoError(format!("Deserialization failed: {:?}", e)))?;
+        r1cs_proofs.push(r1cs_proof);
+    }
+
+    // Step 2: Build verification tuples using caller-provided r_scalars
+    let mut verification_tuples = Vec::with_capacity(proofs_and_instances.len());
+
+    for (i, (_, instance)) in proofs_and_instances.iter().enumerate() {
+        // Each verifier needs its own transcript
+        let mut transcript = Transcript::new(b"SchnorrBridging");
+        let mut verifier: Verifier<_, G1A> = Verifier::new(&mut transcript);
+
+        // First rerandomize: pk_star
+        let c_x_var = verifier.allocate(None).unwrap();
+        let c_y_var = verifier.allocate(None).unwrap();
+        let c_x_tilde_var = verifier.allocate(Some(instance.pk_star_blinded.x)).unwrap();
+        let c_y_tilde_var = verifier.allocate(Some(instance.pk_star_blinded.y)).unwrap();
+
+        re_randomize::<_, _, JubjubConfig, _>(
+            &mut verifier,
+            g3_tables,
+            PointRepresentation {
+                x: c_x_var.into(),
+                y: c_y_var.into(),
+                witness: None,
+            },
+            c_x_tilde_var.into(),
+            c_y_tilde_var.into(),
+            None,
+        );
+
+        // Second rerandomize: pk_r_star
+        let c_r_x_var = verifier.allocate(None).unwrap();
+        let c_r_y_var = verifier.allocate(None).unwrap();
+        let c_r_x_tilde_var = verifier
+            .allocate(Some(instance.pk_r_star_blinded.x))
+            .unwrap();
+        let c_r_y_tilde_var = verifier
+            .allocate(Some(instance.pk_r_star_blinded.y))
+            .unwrap();
+
+        re_randomize::<_, _, JubjubConfig, _>(
+            &mut verifier,
+            g3_tables,
+            PointRepresentation {
+                x: c_r_x_var.into(),
+                y: c_r_y_var.into(),
+                witness: None,
+            },
+            c_r_x_tilde_var.into(),
+            c_r_y_tilde_var.into(),
+            None,
+        );
+
+        // Get verification tuple using the caller-provided r scalar
+        let verification_tuple = verifier
+            .verification_scalars_and_points_with_r(&r1cs_proofs[i], r_scalars[i])
+            .map_err(|e| {
+                ProtocolError::CryptoError(format!("Failed to get verification tuple: {:?}", e))
+            })?;
+
+        verification_tuples.push(verification_tuple);
+    }
+
+    // Step 3: Combine scalars using externally-provided batch random scalars
+    Ok(batch_combine_scalars(
+        verification_tuples,
+        batch_random_scalars,
+    ))
+}
+
 // =============================================================================
 // π_{4,G2}: Public Key Operations Proof
 // =============================================================================

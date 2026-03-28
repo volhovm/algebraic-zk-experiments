@@ -4,6 +4,8 @@
 //! preparation, and MSM verification. Used by both the CLI binary and tests.
 
 #![allow(non_snake_case)]
+#![allow(clippy::type_complexity)]
+#![allow(clippy::too_many_arguments)]
 
 use ark_bls12_381::G1Affine as G1A;
 use ark_ec::short_weierstrass::Affine as SWAffine;
@@ -15,6 +17,7 @@ use ark_ff::UniformRand;
 use ark_ff::Zero;
 use ark_serialize::CanonicalDeserialize;
 use ark_serialize::CanonicalSerialize;
+use sha2::{Digest, Sha256};
 use sp1_sdk::prelude::*;
 
 pub use sp1_schnorr_lib::{GuestInput, GuestOutput, InstanceData, LookupTableData, ProofData};
@@ -239,12 +242,15 @@ pub fn verify_natively(
 }
 
 /// Prepare GuestInput from test data.
+///
+/// Returns (input, r_scalars_bytes, batch_random_scalars_bytes) so the host
+/// can later recompute the same scalars for hash verification.
 pub fn prepare_guest_input(
     r1cs_proofs: &[R1CSProof<G1A>],
     instances: &[SchnorrBridgingInstance],
     g3_tables: &[zkbrownian::proving::relations::lookup::Lookup3Bit<2, ark_bls12_381::Fr>],
     num_proofs: usize,
-) -> GuestInput {
+) -> (GuestInput, Vec<[u8; 32]>, Vec<[u8; 32]>) {
     let proof_data: Vec<ProofData> = r1cs_proofs.iter().map(proof_to_data).collect();
     let instance_data: Vec<InstanceData> = instances.iter().map(instance_to_data).collect();
     let table_data = tables_to_data(g3_tables);
@@ -257,72 +263,124 @@ pub fn prepare_guest_input(
         .map(|_| scalar_to_bytes(&ark_bls12_381::Fr::rand(&mut rng)))
         .collect();
 
-    GuestInput {
+    let input = GuestInput {
         num_proofs: num_proofs as u32,
         proofs: proof_data,
         instances: instance_data,
         lookup_tables: table_data,
-        batch_random_scalars,
-        r_scalars,
-    }
+        batch_random_scalars: batch_random_scalars.clone(),
+        r_scalars: r_scalars.clone(),
+    };
+
+    (input, r_scalars, batch_random_scalars)
 }
 
-/// Perform the MSM verification on host side.
-pub fn verify_msm(
+/// Recompute the same verification scalars the guest computes, hash them,
+/// and return the hash along with the points/scalars needed for MSM.
+pub fn compute_host_output_hash(
+    r1cs_proofs: &[R1CSProof<G1A>],
+    instances: &[SchnorrBridgingInstance],
+    g3_tables: &[zkbrownian::proving::relations::lookup::Lookup3Bit<2, ark_bls12_381::Fr>],
+    r_scalars_bytes: &[[u8; 32]],
+    batch_random_scalars_bytes: &[[u8; 32]],
+) -> (
+    [u8; 32],
+    Vec<G1A>,
+    Vec<ark_bls12_381::Fr>,
+    Vec<ark_bls12_381::Fr>,
+    usize,
+) {
+    // 1. Convert byte scalars to arkworks Fr
+    let r_scalars: Vec<ark_bls12_381::Fr> = r_scalars_bytes.iter().map(scalar_from_bytes).collect();
+    let batch_random_scalars: Vec<ark_bls12_381::Fr> = batch_random_scalars_bytes
+        .iter()
+        .map(scalar_from_bytes)
+        .collect();
+
+    // 2. Build (Schnorr, Instance) pairs for zkbrownian
+    let proofs_and_instances: Vec<_> = r1cs_proofs
+        .iter()
+        .zip(instances.iter())
+        .map(|(proof, instance)| {
+            let mut buf = Vec::new();
+            proof.serialize_compressed(&mut buf).unwrap();
+            let schnorr = zkbrownian::types::Schnorr::<G1A> {
+                data: buf,
+                _phantom: std::marker::PhantomData,
+            };
+            (schnorr, instance.clone())
+        })
+        .collect();
+
+    // 3. Compute scalars via zkbrownian
+    let (proof_points, proof_scalars, fixed_scalars, padded_n) =
+        zkbrownian::proving::circuits::compute_schnorr_bridging_batch_scalars(
+            &proofs_and_instances,
+            g3_tables,
+            &r_scalars,
+            &batch_random_scalars,
+        )
+        .expect("scalar computation failed");
+
+    // 4. Hash in same order as guest:
+    //    proof_point_bytes || proof_scalar_bytes || fixed_scalar_bytes || padded_n_le
+    let mut hasher = Sha256::new();
+    for point in &proof_points {
+        hasher.update(point_to_bytes(point));
+    }
+    for scalar in &proof_scalars {
+        hasher.update(scalar_to_bytes(scalar));
+    }
+    for scalar in &fixed_scalars {
+        hasher.update(scalar_to_bytes(scalar));
+    }
+    hasher.update((padded_n as u32).to_le_bytes());
+    let hash: [u8; 32] = hasher.finalize().into();
+
+    (hash, proof_points, proof_scalars, fixed_scalars, padded_n)
+}
+
+/// Verify the guest's output hash matches the host's independent computation,
+/// then perform the MSM check.
+pub fn verify_output_hash_and_msm(
     output: &GuestOutput,
+    r1cs_proofs: &[R1CSProof<G1A>],
+    instances: &[SchnorrBridgingInstance],
+    g3_tables: &[zkbrownian::proving::relations::lookup::Lookup3Bit<2, ark_bls12_381::Fr>],
+    r_scalars: &[[u8; 32]],
+    batch_random_scalars: &[[u8; 32]],
     pc_gens: &PedersenGens<G1A>,
     bp_gens: &BulletproofGens<G1A>,
 ) -> bool {
-    let padded_n = output.padded_n as usize;
-
-    let proof_points: Vec<G1A> = output
-        .proof_points_bytes
-        .iter()
-        .map(|bytes| G1A::deserialize_compressed(&bytes[..]).unwrap())
-        .collect();
-
-    let proof_scalars: Vec<ark_bls12_381::Fr> =
-        output.proof_scalars.iter().map(scalar_from_bytes).collect();
-
-    let fixed_scalars: Vec<ark_bls12_381::Fr> =
-        output.fixed_scalars.iter().map(scalar_from_bytes).collect();
-
-    assert_eq!(
-        proof_points.len(),
-        proof_scalars.len(),
-        "proof points/scalars length mismatch"
-    );
-    assert_eq!(
-        fixed_scalars.len(),
-        2 + 2 * padded_n,
-        "fixed scalars length mismatch"
-    );
-
-    let gens = bp_gens.share(0);
-    if bp_gens.gens_capacity < padded_n {
-        println!(
-            "ERROR: bp_gens capacity {} < padded_n {}",
-            bp_gens.gens_capacity, padded_n
+    let (host_hash, proof_points, proof_scalars, fixed_scalars, padded_n) =
+        compute_host_output_hash(
+            r1cs_proofs,
+            instances,
+            g3_tables,
+            r_scalars,
+            batch_random_scalars,
         );
+
+    // Check hash
+    if output.output_hash != host_hash {
+        println!("ERROR: output hash mismatch!");
+        println!("  guest: {:?}", output.output_hash);
+        println!("  host:  {:?}", host_hash);
         return false;
     }
+    assert_eq!(output.padded_n, padded_n as u32);
 
+    // MSM check
+    let gens = bp_gens.share(0);
     let fixed_points: Vec<G1A> = std::iter::once(pc_gens.B)
         .chain(std::iter::once(pc_gens.B_blinding))
         .chain(gens.G(padded_n).copied())
         .chain(gens.H(padded_n).copied())
         .collect();
 
-    assert_eq!(
-        fixed_points.len(),
-        fixed_scalars.len(),
-        "fixed points/scalars length mismatch"
-    );
-
     let all_points: Vec<G1A> = proof_points.into_iter().chain(fixed_points).collect();
     let all_scalars: Vec<ark_bls12_381::Fr> =
         proof_scalars.into_iter().chain(fixed_scalars).collect();
-
     let result = <G1A as AffineRepr>::Group::msm_unchecked(&all_points, &all_scalars);
 
     result.is_zero()
@@ -333,7 +391,7 @@ mod tests {
     use super::*;
     use sp1_sdk::ProverClient;
 
-    /// Shared helper: generate test data, execute SP1 guest, verify MSM.
+    /// Shared helper: generate test data, execute SP1 guest, verify hash+MSM.
     /// Returns the cycle count.
     async fn run_batch_execute(num_proofs: usize) -> u64 {
         println!("Generating {} test proof(s)...", num_proofs);
@@ -344,7 +402,8 @@ mod tests {
         verify_natively(&r1cs_proofs, &instances, &pc_gens, &bp_gens, &g3_tables);
         println!("Native verification passed.");
 
-        let input = prepare_guest_input(&r1cs_proofs, &instances, &g3_tables, num_proofs);
+        let (input, r_scalars, batch_random_scalars) =
+            prepare_guest_input(&r1cs_proofs, &instances, &g3_tables, num_proofs);
         println!("Serialized GuestInput: {} proofs", input.num_proofs);
 
         let client = ProverClient::builder().cpu().build().await;
@@ -359,29 +418,26 @@ mod tests {
 
         let output: GuestOutput = public_values.read();
         println!(
-            "Guest output: padded_n={}, proof_points={}, proof_scalars={}, fixed_scalars={}",
+            "Guest output: padded_n={}, hash={:?}",
             output.padded_n,
-            output.proof_points_bytes.len(),
-            output.proof_scalars.len(),
-            output.fixed_scalars.len()
+            &output.output_hash[..8]
         );
 
-        assert_eq!(
-            output.proof_points_bytes.len(),
-            output.proof_scalars.len(),
-            "proof points/scalars length mismatch"
+        println!("Verifying hash+MSM on host...");
+        assert!(
+            verify_output_hash_and_msm(
+                &output,
+                &r1cs_proofs,
+                &instances,
+                &g3_tables,
+                &r_scalars,
+                &batch_random_scalars,
+                &pc_gens,
+                &bp_gens
+            ),
+            "Hash+MSM check FAILED"
         );
-
-        let padded_n = output.padded_n as usize;
-        assert_eq!(
-            output.fixed_scalars.len(),
-            2 + 2 * padded_n,
-            "fixed scalars length mismatch"
-        );
-
-        println!("Verifying MSM on host...");
-        assert!(verify_msm(&output, &pc_gens, &bp_gens), "MSM check FAILED");
-        println!("MSM check PASSED!");
+        println!("Hash+MSM check PASSED!");
 
         cycles
     }
@@ -406,7 +462,8 @@ mod tests {
         println!("Verifying natively...");
         verify_natively(&r1cs_proofs, &instances, &pc_gens, &bp_gens, &g3_tables);
 
-        let input = prepare_guest_input(&r1cs_proofs, &instances, &g3_tables, 1);
+        let (input, r_scalars, batch_random_scalars) =
+            prepare_guest_input(&r1cs_proofs, &instances, &g3_tables, 1);
 
         let client = ProverClient::builder().cpu().build().await;
         let mut stdin = SP1Stdin::new();
@@ -419,8 +476,20 @@ mod tests {
         let output: GuestOutput = public_values.read();
 
         // Verify correctness
-        assert!(verify_msm(&output, &pc_gens, &bp_gens), "MSM check FAILED");
-        println!("MSM check PASSED.");
+        assert!(
+            verify_output_hash_and_msm(
+                &output,
+                &r1cs_proofs,
+                &instances,
+                &g3_tables,
+                &r_scalars,
+                &batch_random_scalars,
+                &pc_gens,
+                &bp_gens
+            ),
+            "Hash+MSM check FAILED"
+        );
+        println!("Hash+MSM check PASSED.");
 
         // Print cycle tracker breakdown
         println!("\n=== Cycle Tracker Breakdown ===");
@@ -466,7 +535,8 @@ mod tests {
         println!("Verifying natively...");
         verify_natively(&r1cs_proofs, &instances, &pc_gens, &bp_gens, &g3_tables);
 
-        let input = prepare_guest_input(&r1cs_proofs, &instances, &g3_tables, 1);
+        let (input, r_scalars, batch_random_scalars) =
+            prepare_guest_input(&r1cs_proofs, &instances, &g3_tables, 1);
 
         let client = ProverClient::builder().cpu().build().await;
         let pk = client.setup(ELF).await.expect("setup failed");
@@ -487,13 +557,22 @@ mod tests {
             .expect("proof verification failed");
         println!("SP1 compressed proof verified successfully!");
 
-        // Also verify MSM from the proof's public values
+        // Also verify hash+MSM from the proof's public values
         let mut public_values = proof.public_values.clone();
         let output: GuestOutput = public_values.read();
         assert!(
-            verify_msm(&output, &pc_gens, &bp_gens),
-            "MSM check on core proof FAILED"
+            verify_output_hash_and_msm(
+                &output,
+                &r1cs_proofs,
+                &instances,
+                &g3_tables,
+                &r_scalars,
+                &batch_random_scalars,
+                &pc_gens,
+                &bp_gens
+            ),
+            "Hash+MSM check on core proof FAILED"
         );
-        println!("MSM check on core proof PASSED!");
+        println!("Hash+MSM check on core proof PASSED!");
     }
 }

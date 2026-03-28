@@ -76,17 +76,12 @@ pub struct GuestInput {
 }
 
 /// Output from the SP1 guest program.
-/// Contains all scalars needed for the host to perform the final MSM check.
+/// Contains a hash of the verification scalars for the host to verify.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GuestOutput {
-    /// All proof-dependent point bytes (compressed G1Affine), concatenated across all proofs.
-    /// The host uses these to reconstruct the points for MSM.
-    pub proof_points_bytes: Vec<Vec<u8>>,
-    /// Scalars corresponding to proof_points_bytes (one scalar per point).
-    pub proof_scalars: Vec<[u8; 32]>,
-    /// Scalars for fixed generators: [B_scalar, B_blinding_scalar, g_0..g_{n-1}, h_0..h_{n-1}]
-    /// These are accumulated across all proofs (batch combined).
-    pub fixed_scalars: Vec<[u8; 32]>,
-    /// Padded n (number of generators needed: (fixed_scalars.len() - 2) / 2)
+    /// SHA256 hash of the serialized verification output.
+    /// The host independently computes the same scalars and verifies this hash.
+    pub output_hash: [u8; 32],
+    /// Padded n (number of variable pairs in the constraint system).
     pub padded_n: u32,
 }

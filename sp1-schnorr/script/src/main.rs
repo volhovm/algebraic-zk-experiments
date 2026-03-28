@@ -24,7 +24,8 @@ async fn main() {
     verify_natively(&r1cs_proofs, &instances, &pc_gens, &bp_gens, &g3_tables);
     println!("Native verification passed.");
 
-    let input = prepare_guest_input(&r1cs_proofs, &instances, &g3_tables, num_proofs);
+    let (input, r_scalars, batch_random_scalars) =
+        prepare_guest_input(&r1cs_proofs, &instances, &g3_tables, num_proofs);
     println!("Serialized GuestInput: {} proofs", input.num_proofs);
 
     let client = ProverClient::from_env().await;
@@ -40,19 +41,26 @@ async fn main() {
 
     let output: GuestOutput = public_values.read();
     println!(
-        "Guest output: padded_n={}, proof_points={}, proof_scalars={}, fixed_scalars={}",
+        "Guest output: padded_n={}, hash={:?}",
         output.padded_n,
-        output.proof_points_bytes.len(),
-        output.proof_scalars.len(),
-        output.fixed_scalars.len()
+        &output.output_hash[..8]
     );
 
-    println!("Verifying MSM on host...");
-    let msm_ok = verify_msm(&output, &pc_gens, &bp_gens);
-    if msm_ok {
-        println!("MSM check PASSED! Verification successful.");
+    println!("Verifying hash+MSM on host...");
+    let ok = verify_output_hash_and_msm(
+        &output,
+        &r1cs_proofs,
+        &instances,
+        &g3_tables,
+        &r_scalars,
+        &batch_random_scalars,
+        &pc_gens,
+        &bp_gens,
+    );
+    if ok {
+        println!("Hash+MSM check PASSED! Verification successful.");
     } else {
-        println!("MSM check FAILED! Verification error.");
+        println!("Hash+MSM check FAILED! Verification error.");
         std::process::exit(1);
     }
 }

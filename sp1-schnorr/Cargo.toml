@@ -23,6 +23,7 @@ group = "0.13.0"
 
 # For Fiat-Shamir transcript in the guest
 merlin = { version = "2", default-features = false }
+sha2 = { version = "0.10", default-features = false }
 sha3 = { version = "0.9.1", default-features = false }
 
 [patch.crates-io]

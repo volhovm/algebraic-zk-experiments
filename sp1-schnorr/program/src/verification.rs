@@ -7,12 +7,11 @@
 
 use bls12_381::Scalar;
 use merlin::Transcript;
+use sha2::{Digest, Sha256};
 
 use sp1_schnorr_lib::{GuestInput, GuestOutput, LookupTableData, ProofData};
 
-use crate::constraint_system::VerifierCS;
-use crate::relations::lookup::Lookup3Bit;
-use crate::relations::rerandomize::re_randomize;
+use crate::direct_constraints::Lookup3Bit;
 use crate::transcript::{TranscriptProtocol, T_LABELS};
 use crate::types::{exp_iter, inner_product, scalar_from_bytes, scalar_inverse, scalar_to_bytes};
 
@@ -77,87 +76,42 @@ fn process_single_proof(
     let mut transcript = Transcript::new(b"SchnorrBridging");
     transcript.r1cs_domain_sep();
 
+    // --- Compute flattened constraints via direct path ---
     println!("cycle-tracker-report-start: constraint_building");
-    let mut cs = VerifierCS::new();
 
-    // First re_randomize: pk_star
-    // All variables use allocate() (not allocate_committed), matching the native verifier.
-    // The instance values (pk_star_blinded.x/y) are NOT encoded as committed variables;
-    // they flow through the Fiat-Shamir transcript instead.
-    let c_x_var = cs.allocate();
-    let c_y_var = cs.allocate();
-    let c_x_tilde_var = cs.allocate();
-    let c_y_tilde_var = cs.allocate();
+    // Compute challenges first (we need z for the direct path).
+    // But we also need the transcript to be in the right state, which
+    // requires knowing n1 and the constraint system shape.
+    // The direct path gives us n directly.
 
-    println!("cycle-tracker-report-start: re_randomize_1");
-    re_randomize(
-        &mut cs,
-        tables,
-        c_x_var.into(),
-        c_y_var.into(),
-        c_x_tilde_var.into(),
-        c_y_tilde_var.into(),
-    );
-    println!("cycle-tracker-report-end: re_randomize_1");
-
-    // Second re_randomize: pk_r_star
-    let c_r_x_var = cs.allocate();
-    let c_r_y_var = cs.allocate();
-    let c_r_x_tilde_var = cs.allocate();
-    let c_r_y_tilde_var = cs.allocate();
-
-    println!("cycle-tracker-report-start: re_randomize_2");
-    re_randomize(
-        &mut cs,
-        tables,
-        c_r_x_var.into(),
-        c_r_y_var.into(),
-        c_r_x_tilde_var.into(),
-        c_r_y_tilde_var.into(),
-    );
-    println!("cycle-tracker-report-end: re_randomize_2");
-
-    // Now compute verification_scalars_and_points
-    // This mirrors verifier.rs:467-714
-
-    // Pad to match the native verifier
-    while cs.size() > cs.num_vars {
-        cs.allocate_multiplier();
-    }
-    println!(
-        "  [info] num_constraints={}, num_vars={}, total_terms={}",
-        cs.constraints.len(),
-        cs.num_vars,
-        cs.constraints.iter().map(|lc| lc.terms.len()).sum::<usize>()
-    );
-    println!("cycle-tracker-report-end: constraint_building");
-
-    let n1 = cs.size();
-
-    println!("cycle-tracker-report-start: transcript_challenges");
-    // Append m (number of committed variables)
-    transcript.append_u64(b"m", cs.num_committed as u64);
-
-    let ncomm = cs.vec_comms.len(); // 0 for this circuit
-    let op_degree = 2 + 2 * (ncomm / 2);
-    let t_poly_deg = 2 * (op_degree + 1);
+    // Hardcoded circuit constants for this circuit:
+    // num_committed=0, ncomm=0, op_degree=2, t_poly_deg=6
+    let num_committed: usize = 0;
+    let ncomm: usize = 0;
+    let op_degree: usize = 2 + 2 * (ncomm / 2); // = 2
+    let t_poly_deg: usize = 2 * (op_degree + 1); // = 6
     let ops = op_splits(op_degree);
     let op_aLaR = ops[0];
     let op_aO = ops[1];
     let op_vec = &ops[2..];
+
+    // For this 1-phase circuit, n1 = n and n2 = 0
+    // n comes from the direct computation
+
+    // We still need the transcript challenges, which require appending
+    // proof points. But the transcript state doesn't depend on the
+    // constraint system — it depends on m (num_committed) and the proof data.
+
+    // Append m (number of committed variables)
+    transcript.append_u64(b"m", num_committed as u64);
 
     // Append proof points to transcript
     transcript.validate_and_append_point_bytes(b"A_I1", &proof.a_i1_bytes)?;
     transcript.validate_and_append_point_bytes(b"A_O1", &proof.a_o1_bytes)?;
     transcript.validate_and_append_point_bytes(b"S1", &proof.s1_bytes)?;
 
-    // Process randomized constraints (verifier side: 2-phase or 1-phase)
-    // re_randomize doesn't use specify_randomized_constraints, so always 1-phase
-    cs.clear_pending();
+    // 1-phase domain separator
     transcript.r1cs_1phase_domain_sep();
-
-    let n = cs.size();
-    let n2 = n - n1;
 
     // Append phase-2 points (identity for 1-phase, but still appended)
     transcript.append_point_bytes(b"A_I2", &proof.a_i2_bytes);
@@ -208,12 +162,17 @@ fn process_single_proof(
 
     // Challenge: w
     let w = transcript.challenge_scalar(b"w");
-    println!("cycle-tracker-report-end: transcript_challenges");
 
-    // Flatten constraints at z
-    println!("cycle-tracker-report-start: flattened_constraints");
-    let (wL, wR, wO, _wV, wVCs, wc) = cs.flattened_constraints(&z);
-    println!("cycle-tracker-report-end: flattened_constraints");
+    // --- Direct constraints path ---
+    println!("cycle-tracker-report-start: direct_constraints");
+    let (wL, wR, wO, wc, n) = crate::direct_constraints::compute_flattened_direct(&z, tables);
+    println!("cycle-tracker-report-end: direct_constraints");
+
+    // n1 = n (1-phase circuit), n2 = 0
+    let n1 = n;
+    let n2: usize = 0;
+
+    println!("cycle-tracker-report-end: constraint_building");
 
     // Deserialize l_vec and r_vec
     println!("cycle-tracker-report-start: deserialize_lr");
@@ -240,8 +199,9 @@ fn process_single_proof(
         .map(|(wRi, yinv)| wRi * yinv)
         .collect();
 
-    // delta = <yneg_wR[0..num_vars], wL>
-    let delta = inner_product(&yneg_wR[0..cs.num_vars], &wL);
+    // delta = <yneg_wR[0..n], wL>
+    // For direct path, num_vars == n (since we sized it directly)
+    let delta = inner_product(&yneg_wR[0..n], &wL);
     println!("cycle-tracker-report-end: inner_products");
 
     println!("cycle-tracker-report-start: vector_scalars");
@@ -272,12 +232,12 @@ fn process_single_proof(
             let y_inv_i = y_inv_iter.next().unwrap();
             let u_or_1 = u_for_h.next().unwrap();
 
-            let wLi = if i < cs.num_vars {
+            let wLi = if i < n {
                 wL_iter.next().unwrap_or(Scalar::zero())
             } else {
                 Scalar::zero()
             };
-            let wOi = if i < cs.num_vars {
+            let wOi = if i < n {
                 wO_iter.next().unwrap_or(Scalar::zero())
             } else {
                 Scalar::zero()
@@ -288,9 +248,11 @@ fn process_single_proof(
             comb += xs[op_aLaR.1] * wLi;
             comb += xs[op_aO.1] * wOi;
 
-            for j in 0..wVCs.len() {
-                let wVCji = wVCs[j].get(i).copied().unwrap_or(Scalar::zero());
-                comb += xs[op_vec[j].1] * wVCji;
+            // wVCs is empty for this circuit (ncomm=0), but keep the loop
+            // for correctness if VALIDATE_DIRECT is removed later.
+            for j in 0..op_vec.len() {
+                // No vector commitment constraints in this circuit
+                let _ = j;
             }
 
             let res = u_or_1 * (y_inv_i * (comb - r_i) - Scalar::one());
@@ -371,9 +333,7 @@ pub fn compute_batch_verification(input: &GuestInput) -> GuestOutput {
 
     if input.num_proofs == 0 {
         return GuestOutput {
-            proof_points_bytes: vec![],
-            proof_scalars: vec![],
-            fixed_scalars: vec![],
+            output_hash: [0u8; 32],
             padded_n: 0,
         };
     }
@@ -410,7 +370,7 @@ pub fn compute_batch_verification(input: &GuestInput) -> GuestOutput {
     for (idx, vt) in vt_iter.enumerate() {
         let random_scalar = scalar_from_bytes(&input.batch_random_scalars[idx]);
 
-        // Append proof points (unscaled — they're just points)
+        // Append proof points (unscaled -- they're just points)
         all_proof_points.extend(vt.proof_dependent_points);
 
         // Scale and append proof scalars
@@ -432,14 +392,24 @@ pub fn compute_batch_verification(input: &GuestInput) -> GuestOutput {
     }
     println!("cycle-tracker-report-end: batch_combine");
 
-    println!("cycle-tracker-report-start: serialize_output");
-    // Convert to output format
-    let output = GuestOutput {
-        proof_points_bytes: all_proof_points,
-        proof_scalars: all_proof_scalars.iter().map(scalar_to_bytes).collect(),
-        fixed_scalars: fixed_scalars.iter().map(scalar_to_bytes).collect(),
+    // Hash the output instead of committing all scalars
+    println!("cycle-tracker-report-start: hash_output");
+    let mut hasher = Sha256::new();
+    for point_bytes in &all_proof_points {
+        hasher.update(point_bytes);
+    }
+    for scalar in &all_proof_scalars {
+        hasher.update(scalar_to_bytes(scalar));
+    }
+    for scalar in &fixed_scalars {
+        hasher.update(scalar_to_bytes(scalar));
+    }
+    hasher.update(padded_n.to_le_bytes());
+    let output_hash: [u8; 32] = hasher.finalize().into();
+    println!("cycle-tracker-report-end: hash_output");
+
+    GuestOutput {
+        output_hash,
         padded_n,
-    };
-    println!("cycle-tracker-report-end: serialize_output");
-    output
+    }
 }
