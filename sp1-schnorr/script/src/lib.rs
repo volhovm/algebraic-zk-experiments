@@ -75,14 +75,11 @@ pub fn tables_to_data(
     tables
         .iter()
         .map(|table| {
-            let mut elems: [[Vec<u8>; 8]; 2] = Default::default();
+            let mut elems = [[[0u8; 32]; 8]; 2];
             for (row_idx, row) in table.elems.iter().enumerate() {
                 for (col_idx, elem) in row.iter().enumerate() {
-                    elems[row_idx][col_idx] = {
-                        let mut buf = Vec::new();
-                        elem.serialize_compressed(&mut buf).unwrap();
-                        buf
-                    };
+                    elem.serialize_compressed(&mut elems[row_idx][col_idx][..])
+                        .unwrap();
                 }
             }
             LookupTableData { elems }

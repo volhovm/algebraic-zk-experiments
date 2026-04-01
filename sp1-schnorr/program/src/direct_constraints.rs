@@ -235,33 +235,21 @@ impl<'a> DirectFlattener<'a> {
         self.emit_o(ib2, one);
         self.advance();
 
-        // single_membership row 0:
-        //   multiply(s0=ML(bv), f_full_0) → var sm0
-        let sm0 = self.alloc_mult();
+        // single_membership for each row (C8-C11):
+        //   multiply(s0=ML(bv), f_full_row) → var sm_row
+        for row in 0..2 {
+            let sm = self.alloc_mult();
 
-        // C8: ML(bv) - ML(sm0) = 0  [left of multiply(s0, f_full_0)]
-        self.emit_l(bv, one);
-        self.emit_l(sm0, neg);
-        self.advance();
+            // ML(bv) - ML(sm) = 0  [left of multiply]
+            self.emit_l(bv, one);
+            self.emit_l(sm, neg);
+            self.advance();
 
-        // C9: f_full_0 - MR(sm0) = 0  [right of multiply]
-        self.emit_f_full(lb, &table.elems[0], one);
-        self.emit_r(sm0, neg);
-        self.advance();
-
-        // single_membership row 1:
-        //   multiply(s0=ML(bv), f_full_1) → var sm1
-        let sm1 = self.alloc_mult();
-
-        // C10: ML(bv) - ML(sm1) = 0
-        self.emit_l(bv, one);
-        self.emit_l(sm1, neg);
-        self.advance();
-
-        // C11: f_full_1 - MR(sm1) = 0
-        self.emit_f_full(lb, &table.elems[1], one);
-        self.emit_r(sm1, neg);
-        self.advance();
+            // f_full_row - MR(sm) = 0  [right of multiply]
+            self.emit_f_full(lb, &table.elems[row], one);
+            self.emit_r(sm, neg);
+            self.advance();
+        }
 
         lb
     }

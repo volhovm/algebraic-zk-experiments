@@ -16,8 +16,6 @@ use crate::types::scalar_to_bytes;
 pub trait TranscriptProtocol {
     fn r1cs_domain_sep(&mut self);
     fn r1cs_1phase_domain_sep(&mut self);
-    #[allow(dead_code)]
-    fn r1cs_2phase_domain_sep(&mut self);
     fn append_scalar(&mut self, label: &'static [u8], scalar: &Scalar);
     /// Append raw point bytes (already compressed-serialized by the host).
     fn append_point_bytes(&mut self, label: &'static [u8], bytes: &[u8]);
@@ -28,7 +26,6 @@ pub trait TranscriptProtocol {
         bytes: &[u8],
     ) -> Result<(), &'static str>;
     fn challenge_scalar(&mut self, label: &'static [u8]) -> Scalar;
-    #[allow(dead_code)]
     fn append_u64(&mut self, label: &'static [u8], x: u64);
 }
 
@@ -39,10 +36,6 @@ impl TranscriptProtocol for Transcript {
 
     fn r1cs_1phase_domain_sep(&mut self) {
         self.append_message(b"dom-sep", b"r1cs-1phase");
-    }
-
-    fn r1cs_2phase_domain_sep(&mut self) {
-        self.append_message(b"dom-sep", b"r1cs-2phase");
     }
 
     fn append_scalar(&mut self, label: &'static [u8], scalar: &Scalar) {

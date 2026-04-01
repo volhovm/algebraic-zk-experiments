@@ -22,11 +22,9 @@ pub fn scalar_to_bytes(s: &Scalar) -> [u8; 32] {
 /// Compute the inner product of two scalar vectors.
 pub fn inner_product(a: &[Scalar], b: &[Scalar]) -> Scalar {
     assert_eq!(a.len(), b.len(), "inner_product: length mismatch");
-    let mut out = Scalar::zero();
-    for i in 0..a.len() {
-        out += a[i] * b[i];
-    }
-    out
+    a.iter()
+        .zip(b.iter())
+        .fold(Scalar::zero(), |acc, (ai, bi)| acc + *ai * *bi)
 }
 
 /// Iterator that yields successive powers of a scalar: 1, x, x^2, x^3, ...

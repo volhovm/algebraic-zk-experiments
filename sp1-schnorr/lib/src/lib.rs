@@ -54,7 +54,7 @@ pub struct LookupTableData {
     /// elems[row][col] as 32-byte field elements
     /// row 0 = x coordinates, row 1 = y coordinates
     /// Each row has 8 elements (3-bit window)
-    pub elems: [[Vec<u8>; 8]; 2],
+    pub elems: [[[u8; 32]; 8]; 2],
 }
 
 /// Input to the SP1 guest program.

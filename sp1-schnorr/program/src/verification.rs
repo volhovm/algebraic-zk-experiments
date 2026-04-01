@@ -15,34 +15,12 @@ use crate::direct_constraints::Lookup3Bit;
 use crate::transcript::{TranscriptProtocol, T_LABELS};
 use crate::types::{exp_iter, inner_product, scalar_from_bytes, scalar_inverse, scalar_to_bytes};
 
-/// Compute op_splits, matching zkbrownian's r1cs::op_splits.
-fn op_splits(op_deg: usize) -> Vec<(usize, usize)> {
-    debug_assert_eq!(op_deg % 2, 0);
-    let mid = op_deg / 2;
-    let mut splits = Vec::with_capacity(op_deg);
-    splits.push((mid, mid));
-    splits.push((op_deg, 0));
-    for r_deg in 1..op_deg + 1 {
-        if r_deg == mid {
-            continue;
-        }
-        let l_deg = op_deg - r_deg;
-        splits.push((l_deg, r_deg));
-    }
-    splits
-}
-
 /// Convert LookupTableData (from host, 32-byte encoded) to Lookup3Bit<2>.
 fn convert_lookup_table(table_data: &LookupTableData) -> Lookup3Bit<2> {
     let mut elems = [[Scalar::zero(); 8]; 2];
-    for (row, (dst_row, src_row)) in elems.iter_mut().zip(table_data.elems.iter()).enumerate() {
-        let _ = row;
+    for (dst_row, src_row) in elems.iter_mut().zip(table_data.elems.iter()) {
         for (dst, src) in dst_row.iter_mut().zip(src_row.iter()) {
-            let bytes: [u8; 32] = src
-                .as_slice()
-                .try_into()
-                .expect("Table element must be 32 bytes");
-            *dst = scalar_from_bytes(&bytes);
+            *dst = scalar_from_bytes(src);
         }
     }
     Lookup3Bit { elems }
@@ -84,19 +62,13 @@ fn process_single_proof(
     // requires knowing n1 and the constraint system shape.
     // The direct path gives us n directly.
 
-    // Hardcoded circuit constants for this circuit:
-    // num_committed=0, ncomm=0, op_degree=2, t_poly_deg=6
+    // Hardcoded circuit constants: num_committed=0, ncomm=0, op_degree=2, t_poly_deg=6
     let num_committed: usize = 0;
-    let ncomm: usize = 0;
-    let op_degree: usize = 2 + 2 * (ncomm / 2); // = 2
-    let t_poly_deg: usize = 2 * (op_degree + 1); // = 6
-    let ops = op_splits(op_degree);
-    let op_aLaR = ops[0];
-    let op_aO = ops[1];
-    let op_vec = &ops[2..];
-
-    // For this 1-phase circuit, n1 = n and n2 = 0
-    // n comes from the direct computation
+    let op_degree: usize = 2;
+    let t_poly_deg: usize = 6;
+    // op_splits(2) = [(1,1), (2,0), (0,2)]; only first two used (ncomm=0)
+    let op_aLaR = (1usize, 1usize);
+    let op_aO = (2usize, 0usize);
 
     // We still need the transcript challenges, which require appending
     // proof points. But the transcript state doesn't depend on the
@@ -168,10 +140,6 @@ fn process_single_proof(
     let (wL, wR, wO, wc, n) = crate::direct_constraints::compute_flattened_direct(&z, tables);
     println!("cycle-tracker-report-end: direct_constraints");
 
-    // n1 = n (1-phase circuit), n2 = 0
-    let n1 = n;
-    let n2: usize = 0;
-
     println!("cycle-tracker-report-end: constraint_building");
 
     // Deserialize l_vec and r_vec
@@ -205,87 +173,38 @@ fn process_single_proof(
     println!("cycle-tracker-report-end: inner_products");
 
     println!("cycle-tracker-report-start: vector_scalars");
-    // u_for_g: [1, 1, ..., 1 (n1 times), u, u, ..., u (n2 times)]
-    let u_for_g: Vec<Scalar> = std::iter::repeat_n(Scalar::one(), n1)
-        .chain(std::iter::repeat_n(u, n2))
-        .collect();
+    // n2 = 0 for this 1-phase circuit, so u_for_g/h is always Scalar::one().
+    // We skip the allocation and multiplication entirely.
 
     let xwR = xs[op_aLaR.0];
 
-    // g_scalars[i] = u_or_1 * (xwR * yneg_wR[i] - l_vec[i])
+    // g_scalars[i] = xwR * yneg_wR[i] - l_vec[i]
     let g_scalars: Vec<Scalar> = yneg_wR
         .iter()
-        .zip(u_for_g.iter())
         .zip(l_vec.iter())
-        .map(|((yneg_wRi, u_or_1), l_i)| *u_or_1 * (xwR * yneg_wRi - l_i))
+        .map(|(yneg_wRi, l_i)| xwR * yneg_wRi - l_i)
         .collect();
 
-    // h_scalars
-    let mut h_scalars = Vec::with_capacity(n);
-    {
-        let mut wL_iter = wL.into_iter();
-        let mut wO_iter = wO.into_iter();
-        let mut y_inv_iter = y_inv_vec.into_iter();
-        let mut u_for_h = u_for_g.into_iter();
-
-        for (i, r_i) in r_vec.iter().enumerate().take(n) {
-            let y_inv_i = y_inv_iter.next().unwrap();
-            let u_or_1 = u_for_h.next().unwrap();
-
-            let wLi = if i < n {
-                wL_iter.next().unwrap_or(Scalar::zero())
-            } else {
-                Scalar::zero()
-            };
-            let wOi = if i < n {
-                wO_iter.next().unwrap_or(Scalar::zero())
-            } else {
-                Scalar::zero()
-            };
-
-            // Compute right polynomial combination
-            let mut comb = Scalar::zero();
-            comb += xs[op_aLaR.1] * wLi;
-            comb += xs[op_aO.1] * wOi;
-
-            // wVCs is empty for this circuit (ncomm=0), but keep the loop
-            // for correctness if VALIDATE_DIRECT is removed later.
-            for j in 0..op_vec.len() {
-                // No vector commitment constraints in this circuit
-                let _ = j;
-            }
-
-            let res = u_or_1 * (y_inv_i * (comb - r_i) - Scalar::one());
-            h_scalars.push(res);
-        }
-    }
+    // h_scalars[i] = y_inv[i] * (xs[op_aLaR.1]*wL[i] + xs[op_aO.1]*wO[i] - r[i]) - 1
+    let h_scalars: Vec<Scalar> = wL
+        .into_iter()
+        .zip(wO.into_iter())
+        .zip(y_inv_vec.into_iter())
+        .zip(r_vec.iter())
+        .map(|(((wLi, wOi), y_inv_i), r_i)| {
+            let comb = xs[op_aLaR.1] * wLi + xs[op_aO.1] * wOi;
+            y_inv_i * (comb - r_i) - Scalar::one()
+        })
+        .collect();
     println!("cycle-tracker-report-end: vector_scalars");
 
     println!("cycle-tracker-report-start: build_output");
-    // T points and scalars (skip T[op_degree])
-    let mut T_points_bytes: Vec<Vec<u8>> = Vec::new();
-    let mut T_scalars: Vec<Scalar> = Vec::new();
-    for (d, (t_bytes, rx)) in proof
-        .t_points_bytes
-        .iter()
-        .zip(rxs.iter())
-        .enumerate()
-        .take(t_poly_deg + 1)
-    {
-        if d == op_degree {
-            continue;
-        }
-        T_points_bytes.push(t_bytes.clone());
-        T_scalars.push(*rx);
-    }
-
     let xI = xs[op_aLaR.0];
     let xO = xs[op_aO.0];
     let xS = xs[op_degree + 1];
 
     // Build proof_dependent points (as raw bytes)
     // ncomm=0 for this circuit, so no vcomm points.
-    // V is empty (allocate() returns MultiplierLeft/Right, not Committed).
     let mut proof_points = vec![
         proof.a_i1_bytes.clone(), // A_I1
         proof.a_o1_bytes.clone(), // A_O1
@@ -294,7 +213,6 @@ fn process_single_proof(
         proof.a_o2_bytes.clone(), // A_O2
         proof.s2_bytes.clone(),   // S2
     ];
-    proof_points.extend(T_points_bytes);
 
     // Build proof_dependent scalars
     let mut proof_scalars = vec![
@@ -305,7 +223,21 @@ fn process_single_proof(
         xO * u, // A_O2
         xS * u, // S2
     ];
-    proof_scalars.extend(T_scalars);
+
+    // Append T points and scalars directly (skip T[op_degree])
+    for (d, (t_bytes, rx)) in proof
+        .t_points_bytes
+        .iter()
+        .zip(rxs.iter())
+        .enumerate()
+        .take(t_poly_deg + 1)
+    {
+        if d == op_degree {
+            continue;
+        }
+        proof_points.push(t_bytes.clone());
+        proof_scalars.push(*rx);
+    }
 
     // Build proof_independent (fixed) scalars
     let B_scalar = w * (t_x - ab) + r * (xs[op_degree] * (wc + delta) - t_x);
@@ -374,12 +306,11 @@ pub fn compute_batch_verification(input: &GuestInput) -> GuestOutput {
         all_proof_points.extend(vt.proof_dependent_points);
 
         // Scale and append proof scalars
-        let scaled_proof_scalars: Vec<Scalar> = vt
-            .proof_dependent_scalars
-            .into_iter()
-            .map(|s| s * random_scalar)
-            .collect();
-        all_proof_scalars.extend(scaled_proof_scalars);
+        all_proof_scalars.extend(
+            vt.proof_dependent_scalars
+                .into_iter()
+                .map(|s| s * random_scalar),
+        );
 
         // Accumulate fixed scalars
         assert_eq!(fixed_scalars.len(), vt.proof_independent_scalars.len());
