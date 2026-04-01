@@ -801,12 +801,16 @@ pub fn forward_batch<R: Rng>(
 
     let proof_results = prepare_forward_proofs_batch(pp, &proof_inputs)?;
 
-    // Phase 1c: Assemble prep data
+    // Phase 1c: Assemble prep data (consume proof_results to avoid cloning)
     let mut prep_data = Vec::with_capacity(n);
-    for (i, &(user_view, message)) in inputs.iter().enumerate() {
-        let (pi_1, pi_2, pi_3, c11, c12, c21, c22, cv1, cv2, pk_star, pk_r_star, schnorr_witness) =
-            proof_results[i].clone();
-
+    for (
+        i,
+        (
+            &(user_view, message),
+            (pi_1, pi_2, pi_3, c11, c12, c21, c22, cv1, cv2, pk_star, pk_r_star, schnorr_witness),
+        ),
+    ) in inputs.iter().zip(proof_results).enumerate()
+    {
         prep_data.push(BatchForwardPrepData {
             message: message.clone(),
             k_r: k_rs[i],
@@ -831,12 +835,12 @@ pub fn forward_batch<R: Rng>(
     }
 
     // Phase 2: BATCH SCHNORR PROVING
-    let schnorr_witnesses: Vec<_> = prep_data.iter().map(|pd| &pd.schnorr_witness).collect();
+    let schnorr_witnesses: Vec<_> = prep_data
+        .iter()
+        .map(|pd| pd.schnorr_witness.clone())
+        .collect();
     let pi_4_g1_proofs = crate::proving::circuits::prove_schnorr_bridging_batch(
-        &schnorr_witnesses
-            .iter()
-            .map(|&w| w.clone())
-            .collect::<Vec<_>>(),
+        &schnorr_witnesses,
         &pp.pc_gens,
         &pp.bp_gens,
         &pp.batch_tables,
