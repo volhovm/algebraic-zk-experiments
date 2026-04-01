@@ -1,0 +1,49 @@
+*.aux
+*.bcf
+*.bbl
+*.blg
+*.brf
+*.log
+*.xml
+*.out
+*.toc
+*.synctex
+*.pdf
+*.thm
+*.nav
+*.snm
+*-blx.bib
+latex.out
+*.sage.py
+rsa_zkps.synctex.gz
+.ipynb_checkpoints
+excom.fdb_latexmk
+excom.fls
+excom.synctex.gz
+sections/introduction copy.tex
+# Rust
+**/target/
+**/*.rs.bk
+*.pdb
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Nix / direnv
+.direnv/
+.envrc
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+*.profraw
+
+setup-data
+result
